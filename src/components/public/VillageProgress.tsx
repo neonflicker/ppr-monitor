@@ -261,16 +261,8 @@ export default function VillageProgress({
     }
   };
 
-  if (!data) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <Loader2 className="size-5 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  const t = data.totals;
   // Scoped sums over the (allocation-adjusted, scope-filtered) rows.
+  // Declared BEFORE any early return so the hook count is always identical.
   const scopedVisible = visible.length > 0 || rows.length === 0 ? visible : rows;
   const scopedTotals = useMemo(() => {
     const sum = scopedVisible.reduce(
@@ -293,6 +285,15 @@ export default function VillageProgress({
     };
   }, [scopedVisible]);
 
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <Loader2 className="size-5 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  const t = data.totals;
   const unallocatedAchievement = rows
     .filter((row) => !row.allocated)
     .reduce((sum, row) => sum + row.achievement, 0);

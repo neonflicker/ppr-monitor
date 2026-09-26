@@ -439,19 +439,9 @@ export default function PublicDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overview]);
 
-  if (!overview) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-3">
-        <Loader2 className="size-6 animate-spin text-primary" />
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          Loading programme data
-        </p>
-      </main>
-    );
-  }
-
   // Scope data is derived from the active allocation import (never hardcoded).
-  // Memoised so the child's hook layout stays stable across re-renders.
+  // Memoised so the child's hook layout stays stable across re-renders. It MUST
+  // be declared above any early return so the hook count never changes.
   const scopeData = useMemo<ScopeData>(() => ({
     available: !!allocation?.upload,
     users: (allocation?.users ?? []).map((u) => ({
@@ -463,6 +453,17 @@ export default function PublicDashboard() {
     villageNames: allocation?.villageNames ?? {},
     villageTargets: allocation?.villageTargets ?? {},
   }), [allocation]);
+
+  if (!overview) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-3">
+        <Loader2 className="size-6 animate-spin text-primary" />
+        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          Loading programme data
+        </p>
+      </main>
+    );
+  }
 
   return (
     <DashboardView
