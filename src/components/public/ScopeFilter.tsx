@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Filter, X } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -7,27 +6,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  isUnallocated,
+  needsUserSelection,
+  resolveUserChange,
+  resolveVillageChange,
+  usersForVillage,
+  viewingLabel,
+  villageOptions,
+  type Scope,
+  type ScopeData,
+} from "@/lib/scopeLink";
+import { Filter, X } from "lucide-react";
 
-export interface Scope {
-  user: string; // "ALL" or user key
-  village: string; // "ALL" or village key
-}
-
-export interface ScopeUser {
-  key: string;
-  name: string;
-  target: number;
-  villages: string[];
-}
-
-export interface ScopeData {
-  available: boolean;
-  users: ScopeUser[];
-  /** normalised village key → display name (active allocation) */
-  villageNames: Record<string, string>;
-  /** normalised village key → total allocated target */
-  villageTargets: Record<string, number>;
-}
+export type { Scope, ScopeUser, ScopeData } from "@/lib/scopeLink";
 
 interface Props {
   scope: Scope;
@@ -36,34 +28,30 @@ interface Props {
 }
 
 /**
- * USER + ALLOTTED VILLAGE public filter bar.
- * Defaults are ALL USERS / ALL VILLAGES; the village list is dependent on the
- * selected user. Nothing here is hardcoded — everything comes from the active
- * allocation import.
+ * USER + ALLOTTED VILLAGE public filter bar — a bidirectionally linked pair.
+ *  · picking a USER narrows the village list to that user's allotments.
+ *  · picking a VILLAGE resolves its allocated user automatically: one user →
+ *    selected; several → SELECT USER with only those candidates; none →
+ *    ALL USERS + an UNALLOCATED status.
+ *  · ALL USERS clears the village; ALL VILLAGES keeps the user.
+ * All relationships come from the active allocation import (§14) — nothing
+ * here is hardcoded.
  */
 export default function ScopeFilter({ scope, onChange, data }: Props) {
-  const selectedUser =
-    scope.user !== "ALL" ? data.users.find((u) => u.key === scope.user) : undefined;
+  const pendingUserSelection = needsUserSelection(scope, data);
+  const unallocated = isUnallocated(scope, data);
 
-  // Dependent village list: only villages allotted to the selected user.
-  const villageOptions =
-    scope.user === "ALL"
-      ? Object.entries(data.villageNames)
-      : (selectedUser?.villages ?? []).map((key) => [key, data.villageNames[key] ?? key]);
+  // Dependent village list: a named user only sees their own allotments; with
+  // ALL USERS every allocation village (plus record-only villages) is offered.
+  const options = villageOptions(data, scope.user);
 
-  const viewingLabel = (() => {
-    const userLabel =
-      scope.user === "ALL"
-        ? "All Users"
-        : (selectedUser?.name ?? scope.user);
-    const villageLabel =
-      scope.village === "ALL"
-        ? scope.user === "ALL"
-          ? "All Villages"
-          : "All Allotted Villages"
-        : (data.villageNames[scope.village] ?? scope.village);
-    return `${userLabel} · ${villageLabel}`;
-  })();
+  // While a multi-user village awaits an explicit choice, the USER dropdown
+  // offers only the users actually assigned to that village (§5).
+  const userOptions = pendingUserSelection
+    ? usersForVillage(data, scope.village)
+    : data.users;
+
+  const label = viewingLabel(scope, data);
 
   const isFiltered = scope.user !== "ALL" || scope.village !== "ALL";
 
@@ -77,15 +65,19 @@ export default function ScopeFilter({ scope, onChange, data }: Props) {
           <Select
             value={scope.user}
             onValueChange={(value) =>
-              onChange({ user: value, village: "ALL" })
+              onChange(resolveUserChange(scope, value, data))
             }
           >
             <SelectTrigger className="h-10 w-full text-sm">
-              <SelectValue placeholder="ALL USERS" />
+              {pendingUserSelection ? (
+                <span className="text-muted-foreground">SELECT USER</span>
+              ) : (
+                <SelectValue placeholder="ALL USERS" />
+              )}
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ALL">ALL USERS</SelectItem>
-              {data.users.map((user) => (
+              {!pendingUserSelection && <SelectItem value="ALL">ALL USERS</SelectItem>}
+              {userOptions.map((user) => (
                 <SelectItem key={user.key} value={user.key}>
                   {user.name}
                 </SelectItem>
@@ -100,7 +92,9 @@ export default function ScopeFilter({ scope, onChange, data }: Props) {
           </label>
           <Select
             value={scope.village}
-            onValueChange={(value) => onChange({ ...scope, village: value })}
+            onValueChange={(value) =>
+              onChange(resolveVillageChange(scope, value, data))
+            }
           >
             <SelectTrigger className="h-10 w-full text-sm">
               <SelectValue placeholder="ALL VILLAGES" />
@@ -109,7 +103,7 @@ export default function ScopeFilter({ scope, onChange, data }: Props) {
               <SelectItem value="ALL">
                 {scope.user === "ALL" ? "ALL VILLAGES" : "ALL ALLOTTED VILLAGES"}
               </SelectItem>
-              {villageOptions.map(([key, name]) => (
+              {options.map(([key, name]) => (
                 <SelectItem key={key} value={key}>
                   {name}
                 </SelectItem>
@@ -137,7 +131,12 @@ export default function ScopeFilter({ scope, onChange, data }: Props) {
 
       <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
         VIEWING:{" "}
-        <span className="font-semibold text-foreground">{viewingLabel}</span>
+        <span className="font-semibold text-foreground">{label}</span>
+        {unallocated && (
+          <span className="ml-2 inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+            Unallocated
+          </span>
+        )}
       </p>
     </div>
   );

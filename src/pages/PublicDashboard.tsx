@@ -442,6 +442,9 @@ export default function PublicDashboard() {
   const todayKey = format(new Date(), "yyyy-MM-dd");
   const overview = useQuery(api.stats.overview, { todayKey });
   const allocation = useQuery(api.allocations.active, {});
+  // Same query VillageProgress subscribes to (Convex dedupes it) — used only
+  // to offer vaccination-record villages that have no allocation row (§12).
+  const villageProgress = useQuery(api.stats.villageProgress, {});
   const refresh = useAction(api.sheetActions.publicRefresh);
   const [refreshing, setRefreshing] = useState(false);
   const autoTried = useRef(false);
@@ -480,17 +483,30 @@ export default function PublicDashboard() {
   // Scope data is derived from the active allocation import (never hardcoded).
   // Memoised so the child's hook layout stays stable across re-renders. It MUST
   // be declared above any early return so the hook count never changes.
-  const scopeData = useMemo<ScopeData>(() => ({
-    available: !!allocation?.upload,
-    users: (allocation?.users ?? []).map((u) => ({
-      key: u.key,
-      name: u.name,
-      target: u.target,
-      villages: u.villages,
-    })),
-    villageNames: allocation?.villageNames ?? {},
-    villageTargets: allocation?.villageTargets ?? {},
-  }), [allocation]);
+  const scopeData = useMemo<ScopeData>(() => {
+    const villageNames = allocation?.villageNames ?? {};
+    // Villages present in vaccination records but absent from the allocation
+    // file: selectable in the filter, yet never attributed to a user (§12).
+    const recordVillages: Record<string, string> = {};
+    for (const row of villageProgress?.rows ?? []) {
+      const key = normalizeVillageClient(row.village);
+      if (!(key in villageNames) && !(key in recordVillages)) {
+        recordVillages[key] = row.village;
+      }
+    }
+    return {
+      available: !!allocation?.upload,
+      users: (allocation?.users ?? []).map((u) => ({
+        key: u.key,
+        name: u.name,
+        target: u.target,
+        villages: u.villages,
+      })),
+      villageNames,
+      villageTargets: allocation?.villageTargets ?? {},
+      recordVillages,
+    };
+  }, [allocation, villageProgress]);
 
   if (!overview) {
     return (
