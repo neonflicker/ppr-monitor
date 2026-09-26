@@ -7,6 +7,8 @@
  * so it can be shared by node actions and regular Convex functions.
  */
 
+import { naturalKeyOf } from "./villageMatch";
+
 export type FieldKey =
   | "recordId"
   | "timestamp"
@@ -98,6 +100,63 @@ export function normalizeHeader(header: string): string {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/** Spec normalisation: lowercase, trim, collapse repeated whitespace. */
+export function normalizeHeaderText(header: string): string {
+  return header.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+/** Headers that denote the Village field by their exact wording. */
+const VILLAGE_EXACT_HEADERS = new Set([
+  "village",
+  "villagename",
+  "nameofthevillage",
+  "nameofvillage",
+]);
+
+/** Words that make a "village"-worded header a question/flag/target column
+ *  instead of the Village field (e.g. “Is vaccination completed in the
+ *  village?”, “Village Target”, “Village Covered? Yes/No”). */
+const NON_VILLAGE_HEADER_WORDS = new Set([
+  "yes", "no", "y", "n", "target", "targets", "achieved", "achievement",
+  "completed", "complete", "status", "same", "check", "checked", "confirm",
+  "confirmed", "verified", "total", "count", "number", "required",
+]);
+
+/** Classification rank for a column whose header mentions "village":
+ *  0 = exact Village header (e.g. Column O “Village”, “Village Name”)
+ *  1 = clean village-ish header that is not a question/flag/target
+ *  2 = question/flag/target header — never the primary Village column. */
+export function villageHeaderRank(raw: string): 0 | 1 | 2 {
+  const norm = normalizeHeader(raw);
+  if (VILLAGE_EXACT_HEADERS.has(norm)) return 0;
+  const text = normalizeHeaderText(raw);
+  if (text.includes("?")) return 2;
+  const tokens = text.replace(/[^a-z0-9]+/g, " ").split(" ").filter(Boolean);
+  return tokens.some((t) => NON_VILLAGE_HEADER_WORDS.has(t)) ? 2 : 1;
+}
+
+/** Values that must never be treated as a village name when read from a
+ *  secondary (legacy) column: Yes/No answers, bare numbers, target text. */
+const NON_VILLAGE_VALUES = new Set([
+  "yes", "no", "y", "n", "true", "false", "done", "complete", "completed",
+  "target", "targets", "total", "na", "nil",
+]);
+
+/** Does a cell value plausibly hold a village name? Used only for the
+ *  guarded legacy-column fallback so a Yes/No or Target answer can never
+ *  become a village. */
+export function looksLikeVillage(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const text = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!text) return false;
+  if (NON_VILLAGE_VALUES.has(text)) return false;
+  if (/^\d+$/.test(text)) return false;
+  if (/^(target|total|count)\b/.test(text)) return false;
+  if (trimmed.includes("?")) return false;
+  return text.length >= 2;
+}
+
 const isBlank = (s: string) => s.trim() === "";
 
 /** Matches a header (raw + normalised) to a logical application field. */
@@ -148,22 +207,57 @@ export interface ColumnMapping {
   mapping: Partial<Record<FieldKey, number>>;
   headers: string[];
   unmapped: string[];
+  /** Other columns whose header also mentions "village" (e.g. the legacy
+   *  column left behind when the form gained a new Village field). Only
+   *  consulted when the primary Village cell is blank, and only for values
+   *   that plausibly are village names. */
+  villageFallbacks: number[];
 }
 
-/** Map sheet headers to fields regardless of order or exact wording. */
+/**
+ * Map sheet headers to fields regardless of order or exact wording.
+ *
+ * Village handling (§Issue 1): every header mentioning "village" becomes a
+ * candidate, but the PRIMARY column is chosen by header wording — an exact
+ * "Village" / "Village Name" header (currently Column O) always beats a
+ * question/flag column such as “Is vaccination completed in the village?”
+ * (currently Column N). Non-winning candidates are exposed as guarded
+ * per-row fallbacks and reported as unmapped.
+ */
 export function mapColumns(headers: string[]): ColumnMapping {
   const mapping: Partial<Record<FieldKey, number>> = {};
   const unmapped: string[] = [];
+  const villageCandidates: number[] = [];
+
   headers.forEach((raw, index) => {
     if (isBlank(raw)) return;
     const field = matchField(normalizeHeader(raw), raw);
+    if (field === "village") {
+      // Handled below — multiple headers can mention "village".
+      villageCandidates.push(index);
+      return;
+    }
     if (field && mapping[field] === undefined) {
       mapping[field] = index;
     } else {
       unmapped.push(raw.trim());
     }
   });
-  return { mapping, headers, unmapped };
+
+  const villageFallbacks: number[] = [];
+  if (villageCandidates.length > 0) {
+    const ordered = [...villageCandidates].sort(
+      (a, b) =>
+        villageHeaderRank(headers[a]) - villageHeaderRank(headers[b]) || a - b,
+    );
+    mapping.village = ordered[0];
+    for (const idx of ordered.slice(1)) {
+      villageFallbacks.push(idx);
+      unmapped.push(headers[idx].trim());
+    }
+  }
+
+  return { mapping, headers, unmapped, villageFallbacks };
 }
 
 const MONTHS: Record<string, number> = {
@@ -335,6 +429,30 @@ const get = (cells: string[], idx: number | undefined): string =>
   idx === undefined ? "" : (cells[idx] ?? "").trim();
 
 /**
+ * Read the Village cell for one row.
+ *
+ * The mapped column (the exact-header Village column, currently Column O) is
+ * authoritative: whenever it has a value, that value is used. Only when it is
+ * blank do we consult the guarded legacy fallbacks (other "village"-worded
+ * columns, in header-rank order) — and only for values that plausibly are
+ * village names, so a Yes/No answer or a target number can never become a
+ * village (§Issue 1).
+ */
+function readVillage(
+  cells: string[],
+  primary: number | undefined,
+  fallbacks: number[],
+): string {
+  const primaryValue = get(cells, primary);
+  if (primaryValue) return primaryValue;
+  for (const idx of fallbacks) {
+    const candidate = get(cells, idx);
+    if (looksLikeVillage(candidate)) return candidate;
+  }
+  return "";
+}
+
+/**
  * Parse a full sheet (headers + data rows) into normalised records.
  * Returns a `fatal` error when required columns cannot be located.
  */
@@ -354,7 +472,7 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
   }
 
   const headers = rows[0];
-  const { mapping, unmapped } = mapColumns(headers);
+  const { mapping, unmapped, villageFallbacks } = mapColumns(headers);
   const mappedLabels = (Object.keys(mapping) as FieldKey[]).map(
     (f) => `${headers[mapping[f]!]} → ${FIELD_LABELS[f]}`,
   );
@@ -392,7 +510,7 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
   dataRows.forEach((cells) => {
     const dateRaw = get(cells, mapping.date);
     const dateMs = parseSheetDate(dateRaw || undefined);
-    const village = get(cells, mapping.village);
+    const village = readVillage(cells, mapping.village, villageFallbacks);
     const vaccinator = get(cells, mapping.vaccinator);
     const timestamp = get(cells, mapping.timestamp);
     const recordId = get(cells, mapping.recordId);
@@ -496,4 +614,174 @@ export function buildCsvUrl(sheetUrl: string, gid?: string): string {
   const gidValue = gid && gid.trim() ? gid.trim() : gidFromUrl?.[1];
   if (gidValue) url += `&gid=${gidValue}`;
   return url;
+}
+
+/* ------------------------------------------------------------------ */
+/* Deterministic sync reconciliation (§Issue 2)                         */
+/* ------------------------------------------------------------------ */
+
+/** A stored vaccination record as seen by the sync (source is provenance). */
+export interface ExistingRecord {
+  id: string;
+  externalKey: string;
+  naturalKey?: string;
+  source: string; // "google_sheet" | "bharat_pashudhan"
+  rawHash: string;
+  status: "valid" | "rejected";
+}
+
+export interface SheetDiff {
+  /** rows to insert */
+  inserts: NormalizedRow[];
+  /** stored rows to overwrite (edit / re-key in place — never a 2nd copy) */
+  updates: { id: string; row: NormalizedRow }[];
+  /** stored google_sheet rows that no longer exist in the sheet */
+  deletions: string[];
+  unchanged: number;
+  validProcessed: number;
+  invalidProcessed: number;
+  sheetDuplicates: number;
+  eventDuplicates: number;
+  /** parsed-column reasons merged with cross-sync dedup reasons */
+  reasons: { reason: string; count: number }[];
+}
+
+/**
+ * Diff the CURRENT sheet rows against the stored records.
+ *
+ * Pure and idempotent — the same (sheet, store) pair always yields the same
+ * diff, and applying it makes the store mirror the sheet exactly:
+ *
+ *   · new row        → one insert
+ *   · edited row     → one update of the SAME record (no second copy)
+ *   · deleted row    → one deletion of the google_sheet record
+ *   · no change      → everything lands in `unchanged`
+ *
+ * Reconciliation only ever targets source = "google_sheet"; Bharat Pashudhan
+ * and every other source are left untouched. Provenance lives on the record
+ * itself (`source`), so the sync can safely reconcile its own dataset.
+ */
+export function diffSheetRecords(
+  parsed: ParsedSheet,
+  existing: ExistingRecord[],
+): SheetDiff {
+  const byKey = new Map<string, ExistingRecord>();
+  // naturalKey → the stored record, so an edited row updates its own record.
+  const byNatural = new Map<string, ExistingRecord>();
+  for (const row of existing) {
+    byKey.set(row.externalKey, row);
+    if (row.status === "valid" && row.naturalKey) {
+      const prev = byNatural.get(row.naturalKey);
+      // Prefer the google_sheet owner so sheet edits re-key that record
+      // instead of being skipped against a Bharat duplicate.
+      if (
+        !prev ||
+        (prev.source !== "google_sheet" && row.source === "google_sheet")
+      ) {
+        byNatural.set(row.naturalKey, row);
+      }
+    }
+  }
+
+  const inserts: NormalizedRow[] = [];
+  const updates: { id: string; row: NormalizedRow }[] = [];
+  const seenInSheet = new Set<string>();
+  const batchNaturals = new Set<string>();
+  const reasonCount = new Map<string, number>();
+  const bump = (reason: string) =>
+    reasonCount.set(reason, (reasonCount.get(reason) ?? 0) + 1);
+
+  let unchanged = 0;
+  let validProcessed = 0;
+  let invalidProcessed = 0;
+  let sheetDuplicates = 0;
+  let eventDuplicates = 0;
+
+  for (const row of parsed.records) {
+    const natural = naturalKeyOf(row);
+    row.naturalKey = natural || undefined;
+
+    if (seenInSheet.has(row.externalKey)) {
+      sheetDuplicates++;
+      bump("Duplicate row within sheet (skipped)");
+      continue;
+    }
+    seenInSheet.add(row.externalKey);
+    if (row.status === "rejected") invalidProcessed++;
+    else validProcessed++;
+
+    const match = byKey.get(row.externalKey);
+
+    if (row.status === "valid" && natural && !match) {
+      const owner = byNatural.get(natural);
+      if (owner && owner.source === "google_sheet") {
+        // Same real-world sheet event under a changed key (edited spelling,
+        // village, timestamp…) → update the stored record in place. Mark the
+        // old key as seen so reconciliation does not delete the record it is
+        // about to re-key.
+        if (!batchNaturals.has(natural)) {
+          batchNaturals.add(natural);
+          seenInSheet.add(owner.externalKey);
+          updates.push({ id: owner.id, row });
+          continue;
+        }
+      } else if (owner) {
+        // Cross-source duplicate (Bharat Pashudhan) — never counted twice.
+        eventDuplicates++;
+        bump(
+          owner.source === "bharat_pashudhan"
+            ? "Matches a Bharat Pashudhan record (not counted twice)"
+            : "Duplicate vaccination event (already stored)",
+        );
+        continue;
+      }
+    }
+    if (row.status === "valid" && natural) {
+      if (batchNaturals.has(natural)) {
+        eventDuplicates++;
+        bump("Duplicate vaccination event within sheet (skipped)");
+        continue;
+      }
+      batchNaturals.add(natural);
+    }
+
+    if (!match) {
+      inserts.push(row);
+    } else if (
+      match.rawHash !== row.rawHash ||
+      match.status !== row.status ||
+      (!match.naturalKey && row.naturalKey)
+    ) {
+      updates.push({ id: match.id, row });
+    } else {
+      unchanged++;
+    }
+  }
+
+  // The sheet is the authoritative source for its own records: any stored
+  // google_sheet row whose key was not seen this run has been deleted (or
+  // re-keyed) upstream, so remove it. Rows from other sources never match
+  // this filter — their provenance protects them.
+  const deletions = existing
+    .filter(
+      (r) => r.source === "google_sheet" && !seenInSheet.has(r.externalKey),
+    )
+    .map((r) => r.id);
+
+  const reasons: { reason: string; count: number }[] = [...parsed.reasons];
+  for (const [reason, count] of reasonCount) {
+    reasons.push({ reason, count });
+  }
+
+  return {
+    inserts,
+    updates,
+    deletions,
+    unchanged,
+    validProcessed,
+    invalidProcessed,
+    sheetDuplicates,
+    eventDuplicates,
+    reasons,
+  };
 }

@@ -197,6 +197,27 @@ async function updateRows(
   return updated;
 }
 
+/**
+ * Remove google_sheet records that no longer exist in the master sheet.
+ *
+ * Called by the sync action after a fully successful parse. The source
+ * provenance is re-checked here so this mutation can NEVER delete a record
+ * belonging to another dataset (Bharat Pashudhan, validated imports, …).
+ */
+export const deleteRecords = internalMutation({
+  args: { ids: v.array(v.id("vaccinationRecords")) },
+  handler: async (ctx, { ids }) => {
+    let deleted = 0;
+    for (const id of ids) {
+      const doc = await ctx.db.get(id);
+      if (!doc || doc.source !== "google_sheet") continue;
+      await ctx.db.delete(id);
+      deleted++;
+    }
+    return deleted;
+  },
+});
+
 /** Apply a chunk of new/changed records (called repeatedly by the sync action). */
 export const applyBatch = internalMutation({
   args: {
@@ -222,6 +243,7 @@ export const finishSync = internalMutation({
     updatedRecords: v.number(),
     unchangedRecords: v.number(),
     rejectedRecords: v.number(),
+    deletedRecords: v.optional(v.number()),
     invalidReasons: v.array(
       v.object({ reason: v.string(), count: v.number() }),
     ),
@@ -244,6 +266,7 @@ export const finishSync = internalMutation({
       updatedRecords: args.updatedRecords,
       unchangedRecords: args.unchangedRecords,
       rejectedRecords: args.rejectedRecords,
+      deletedRecords: args.deletedRecords,
       invalidReasons: args.invalidReasons,
       mappedColumns: args.mappedColumns,
       unmappedColumns: args.unmappedColumns,

@@ -3,9 +3,13 @@
 import { ConvexError, v } from "convex/values";
 import { createHash } from "node:crypto";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { action, type ActionCtx } from "./_generated/server";
-import { buildCsvUrl, parseSheet } from "./lib/sheetParser";
-import { naturalKeyOf } from "./lib/villageMatch";
+import {
+  buildCsvUrl,
+  diffSheetRecords,
+  parseSheet,
+} from "./lib/sheetParser";
 
 const SESSION_EXPIRED = "SESSION_EXPIRED:";
 const AUTO_SYNC_MIN_MS = 5 * 60 * 1000;
@@ -106,16 +110,11 @@ async function fetchCsv(url: string): Promise<string> {
   }
 }
 
-type Counters = {
-  validProcessed: number;
-  invalidProcessed: number;
-  sheetDuplicates: number;
-  eventDuplicates: number;
-};
-
 /**
- * Pull the historical PPR Google Sheet, diff it against stored records and
- * persist only what is new or changed. Existing rows are never re-counted.
+ * Pull the CURRENT PPR Google Sheet, diff it against the stored records and
+ * reconcile: new rows are inserted, edited rows update in place, and rows
+ * deleted from the sheet are removed. Existing rows are never re-counted and
+ * running it twice with no sheet change is a no-op (idempotent).
  */
 export type SyncSummary = {
   skipped?: boolean;
@@ -130,6 +129,7 @@ export type SyncSummary = {
   updatedRecords?: number;
   unchangedRecords?: number;
   rejectedRecords?: number;
+  deletedRecords?: number;
   invalidReasons?: { reason: string; count: number }[];
 };
 
@@ -232,118 +232,74 @@ async function performSync(
         stage: "Matching against stored records…",
       });
       const existing = await ctx.runQuery(internal.sync.getExisting, {});
-      type Existing = (typeof existing)[number];
-      const byKey = new Map<string, Existing>();
-      const naturalSource = new Map<string, string>();
-      for (const row of existing) {
-        byKey.set(row.externalKey, row);
-        if (row.status === "valid" && row.naturalKey) {
-          naturalSource.set(row.naturalKey, row.source);
-        }
-      }
 
-      const inserts: any[] = [];
-      const updates: { id: Existing["id"]; row: any }[] = [];
-      const seenInSheet = new Set<string>();
-      const batchNaturals = new Set<string>();
-      const reasonCount = new Map<string, number>();
-      const bump = (reason: string) =>
-        reasonCount.set(reason, (reasonCount.get(reason) ?? 0) + 1);
-      const counters: Counters = {
-        validProcessed: 0,
-        invalidProcessed: 0,
-        sheetDuplicates: 0,
-        eventDuplicates: 0,
-      };
-      let unchanged = 0;
-
-      for (const row of parsed.records) {
-        const natural = naturalKeyOf(row);
-        row.naturalKey = natural || undefined;
-
-        if (seenInSheet.has(row.externalKey)) {
-          counters.sheetDuplicates++;
-          bump("Duplicate row within sheet (skipped)");
-          continue;
-        }
-        seenInSheet.add(row.externalKey);
-        if (row.status === "rejected") counters.invalidProcessed++;
-        else counters.validProcessed++;
-
-        const match = byKey.get(row.externalKey);
-
-        // Never count the same real-world event twice across sources.
-        if (row.status === "valid" && natural && !match) {
-          const storedSource = naturalSource.get(natural);
-          if (storedSource) {
-            counters.eventDuplicates++;
-            bump(
-              storedSource === "bharat_pashudhan"
-                ? "Matches a Bharat Pashudhan record (not counted twice)"
-                : "Duplicate vaccination event (already stored)",
-            );
-            continue;
-          }
-        }
-        if (row.status === "valid" && natural) {
-          if (batchNaturals.has(natural)) {
-            counters.eventDuplicates++;
-            bump("Duplicate vaccination event within sheet (skipped)");
-            continue;
-          }
-          batchNaturals.add(natural);
-        }
-
-        if (!match) {
-          inserts.push(row);
-        } else if (
-          match.rawHash !== row.rawHash ||
-          match.status !== row.status ||
-          (!match.naturalKey && row.naturalKey)
-        ) {
-          updates.push({ id: match.id, row });
-        } else {
-          unchanged++;
-        }
-      }
+      // Deterministic diff of the CURRENT sheet rows vs the stored records
+      // (pure + idempotent, unit-tested): inserts, in-place updates, and the
+      // google_sheet rows that vanished from the sheet.
+      const diff = diffSheetRecords(
+        parsed,
+        existing.map((row) => ({ ...row, id: row.id as string })),
+      );
 
       let newRecords = 0;
       let updatedRecords = 0;
-      if (inserts.length > 0 || updates.length > 0) {
+      if (diff.inserts.length > 0 || diff.updates.length > 0) {
         await ctx.runMutation(internal.sync.setStage, {
           syncId,
-          stage: `Importing ${inserts.length} new and ${updates.length} updated records…`,
+          stage: `Importing ${diff.inserts.length} new and ${diff.updates.length} updated records…`,
         });
-        for (let i = 0; i < inserts.length; i += BATCH_SIZE) {
+        for (let i = 0; i < diff.inserts.length; i += BATCH_SIZE) {
           const result = await ctx.runMutation(internal.sync.applyBatch, {
-            inserts: inserts.slice(i, i + BATCH_SIZE),
+            inserts: diff.inserts.slice(i, i + BATCH_SIZE),
             updates: [],
           });
           newRecords += result.inserted;
         }
-        for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+        for (let i = 0; i < diff.updates.length; i += BATCH_SIZE) {
           const result = await ctx.runMutation(internal.sync.applyBatch, {
             inserts: [],
-            updates: updates.slice(i, i + BATCH_SIZE),
+            updates: diff.updates
+              .slice(i, i + BATCH_SIZE)
+              .map(({ id, row }) => ({
+                id: id as Id<"vaccinationRecords">,
+                row,
+              })),
           });
           updatedRecords += result.updated;
         }
       }
 
-      const invalidReasons = [...parsed.reasons];
-      for (const [reason, count] of reasonCount) {
-        invalidReasons.push({ reason, count });
+      // Reconciliation (§Issue 2): the sheet is authoritative for its own
+      // records. Remove google_sheet rows that no longer exist upstream.
+      // Only reached after a fully successful parse, and deleteRecords
+      // re-checks provenance, so other datasets are never touched.
+      let deletedRecords = 0;
+      if (diff.deletions.length > 0) {
+        await ctx.runMutation(internal.sync.setStage, {
+          syncId,
+          stage: `Removing ${diff.deletions.length} records deleted from the sheet…`,
+        });
+        for (let i = 0; i < diff.deletions.length; i += BATCH_SIZE) {
+          deletedRecords += await ctx.runMutation(internal.sync.deleteRecords, {
+            ids: diff.deletions
+              .slice(i, i + BATCH_SIZE)
+              .map((id) => id as Id<"vaccinationRecords">),
+          });
+        }
       }
+
+      const invalidReasons = diff.reasons;
 
       await ctx.runMutation(internal.sync.finishSync, {
         syncId,
         recordsRetrieved: parsed.totalRows,
-        validRecords: counters.validProcessed,
-        duplicateRows: counters.sheetDuplicates + counters.eventDuplicates,
+        validRecords: diff.validProcessed,
+        duplicateRows: diff.sheetDuplicates + diff.eventDuplicates,
         newRecords,
         updatedRecords,
-        unchangedRecords: unchanged,
-        rejectedRecords: counters.invalidProcessed,
+        unchangedRecords: diff.unchanged,
+        rejectedRecords: diff.invalidProcessed,
+        deletedRecords,
         invalidReasons,
         mappedColumns: parsed.mappedLabels,
         unmappedColumns: parsed.unmapped,
@@ -355,12 +311,13 @@ async function performSync(
         triggeredByUser: by,
         durationMs: Date.now() - startedAt,
         recordsRetrieved: parsed.totalRows,
-        validRecords: counters.validProcessed,
-        duplicateRows: counters.sheetDuplicates + counters.eventDuplicates,
+        validRecords: diff.validProcessed,
+        duplicateRows: diff.sheetDuplicates + diff.eventDuplicates,
         newRecords,
         updatedRecords,
-        unchangedRecords: unchanged,
-        rejectedRecords: counters.invalidProcessed,
+        unchangedRecords: diff.unchanged,
+        rejectedRecords: diff.invalidProcessed,
+        deletedRecords,
         invalidReasons,
       };
     } catch (err: any) {

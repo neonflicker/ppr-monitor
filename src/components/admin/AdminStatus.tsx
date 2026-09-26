@@ -58,7 +58,11 @@ export default function AdminStatus({ overview, onOpenSettings }: Props) {
             result.newRecords ?? 0
           } new · ${result.updatedRecords ?? 0} updated · ${
             result.unchangedRecords ?? 0
-          } unchanged`,
+          } unchanged${
+            result.deletedRecords
+              ? ` · ${result.deletedRecords} removed`
+              : ""
+          }`,
         });
       }
     } catch (err) {
@@ -226,11 +230,15 @@ export default function AdminStatus({ overview, onOpenSettings }: Props) {
 
           {lastSuccess && !busy && (
             <>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
                 <Mini label="Rows retrieved" value={lastSuccess.recordsRetrieved} />
                 <Mini label="New records" value={lastSuccess.newRecords} />
                 <Mini label="Updated" value={lastSuccess.updatedRecords} />
                 <Mini label="Unchanged" value={lastSuccess.unchangedRecords} />
+                <Mini
+                  label="Removed (deleted in sheet)"
+                  value={lastSuccess.deletedRecords}
+                />
                 <Mini label="Rejected" value={lastSuccess.rejectedRecords} />
                 <Mini label="Duplicates skipped" value={lastSuccess.duplicateRows} />
               </div>

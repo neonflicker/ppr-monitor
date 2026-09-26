@@ -89,6 +89,8 @@ const schema = defineSchema(
       updatedRecords: v.optional(v.number()),
       unchangedRecords: v.optional(v.number()),
       rejectedRecords: v.optional(v.number()),
+      // google_sheet rows removed because they no longer exist in the sheet.
+      deletedRecords: v.optional(v.number()),
       invalidReasons: v.optional(
         v.array(v.object({ reason: v.string(), count: v.number() })),
       ),
