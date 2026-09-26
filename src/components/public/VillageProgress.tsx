@@ -169,9 +169,11 @@ export interface VillageScopeProps {
 }
 
 export default function VillageProgress({
-  scope = { user: "ALL", village: "ALL" },
+  scope,
   scopeData,
 }: VillageScopeProps = {}) {
+  // Defaults (never via a default parameter, to keep the hook layout stable).
+  const normalizedScope = scope ?? { user: "ALL", village: "ALL" };
   const data = useQuery(api.stats.villageProgress, {});
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -179,11 +181,12 @@ export default function VillageProgress({
   const [dir, setDir] = useState<"asc" | "desc">("asc");
 
   // Scope keys: the allocation row keys are already normalised server-side.
-  const selectedVillageKey = scope.village === "ALL" ? null : scope.village;
+  const selectedVillageKey =
+    normalizedScope.village === "ALL" ? null : normalizedScope.village;
   const selectedUser =
-    scope.user === "ALL"
+    normalizedScope.user === "ALL"
       ? null
-      : (scopeData?.users.find((u) => u.key === scope.user) ?? null);
+      : (scopeData?.users.find((u) => u.key === normalizedScope.user) ?? null);
   const userVillageKeys =
     selectedUser === null ? null : new Set(selectedUser.villages);
 
@@ -569,11 +572,11 @@ export default function VillageProgress({
               sums replace the whole-dispensary numbers. ---- */}
       <div className="rounded-md border border-border bg-card px-3 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          {scope.user !== "ALL" || scope.village !== "ALL"
+          {normalizedScope.user !== "ALL" || normalizedScope.village !== "ALL"
             ? "Filtered Total"
             : "Dispensary Total"}
         </p>
-        {scope.user !== "ALL" || scope.village !== "ALL" ? (
+        {normalizedScope.user !== "ALL" || normalizedScope.village !== "ALL" ? (
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <Metric
               label="Scope Target"

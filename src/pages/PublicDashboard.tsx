@@ -451,7 +451,8 @@ export default function PublicDashboard() {
   }
 
   // Scope data is derived from the active allocation import (never hardcoded).
-  const scopeData: ScopeData = {
+  // Memoised so the child's hook layout stays stable across re-renders.
+  const scopeData = useMemo<ScopeData>(() => ({
     available: !!allocation?.upload,
     users: (allocation?.users ?? []).map((u) => ({
       key: u.key,
@@ -461,7 +462,7 @@ export default function PublicDashboard() {
     })),
     villageNames: allocation?.villageNames ?? {},
     villageTargets: allocation?.villageTargets ?? {},
-  };
+  }), [allocation]);
 
   return (
     <DashboardView
