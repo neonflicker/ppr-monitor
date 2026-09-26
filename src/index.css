@@ -193,4 +193,65 @@
     background-color: oklch(0.97 0.02 90);
     border: 1px solid oklch(0.85 0.05 90);
   }
+
+  /* Subtle tinted card surfaces for the monitoring dashboard.
+     Each tint pairs a very light background with a slightly stronger matching
+     border so cards read as panels against the cream page. Keep them quiet —
+     these are administrative panels, not a colourful consumer app. */
+  .tint-blue {
+    background-color: oklch(0.962 0.02 255);
+    border-color: oklch(0.845 0.03 255);
+  }
+
+  .tint-sky {
+    background-color: oklch(0.96 0.022 230);
+    border-color: oklch(0.845 0.032 230);
+  }
+
+  .tint-neutral-blue {
+    background-color: oklch(0.967 0.013 250);
+    border-color: oklch(0.865 0.02 250);
+  }
+
+  .tint-amber {
+    background-color: oklch(0.964 0.026 85);
+    border-color: oklch(0.855 0.035 85);
+  }
+
+  .tint-lavender {
+    background-color: oklch(0.962 0.02 290);
+    border-color: oklch(0.85 0.03 290);
+  }
+
+  /* Quieter tint for large panels (progress card, species cards). */
+  .tint-blue-soft {
+    background-color: oklch(0.972 0.014 250);
+    border-color: oklch(0.865 0.024 250);
+  }
+}
+
+/* Dark-mode counterparts: keep the same hue families, just deeper. */
+.dark .tint-blue {
+  background-color: oklch(0.25 0.032 255);
+  border-color: oklch(0.38 0.04 255);
+}
+.dark .tint-sky {
+  background-color: oklch(0.25 0.032 230);
+  border-color: oklch(0.38 0.04 230);
+}
+.dark .tint-neutral-blue {
+  background-color: oklch(0.235 0.016 250);
+  border-color: oklch(0.34 0.02 250);
+}
+.dark .tint-amber {
+  background-color: oklch(0.25 0.03 85);
+  border-color: oklch(0.36 0.04 85);
+}
+.dark .tint-lavender {
+  background-color: oklch(0.25 0.03 290);
+  border-color: oklch(0.37 0.04 290);
+}
+.dark .tint-blue-soft {
+  background-color: oklch(0.225 0.02 250);
+  border-color: oklch(0.34 0.025 250);
 }

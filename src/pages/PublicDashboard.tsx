@@ -40,6 +40,11 @@ import { normalizeVillageClient } from "@/lib/scopeKeys";
 
 const nf = new Intl.NumberFormat("en-IN");
 
+/** Livestock Census goat population for Boginadi — a reference figure only.
+    Never a vaccination target: it must not feed Programme Target, achievement,
+    remaining or completion calculations. */
+const CENSUS_GOAT_POPULATION = 18466;
+
 const NAV = [
   { id: "dashboard", label: "DASHBOARD", icon: LayoutDashboard },
   { id: "villages", label: "VILLAGES", icon: MapPinned },
@@ -99,15 +104,21 @@ function SectionHead({
       className="scroll-mt-28 border-b border-border pb-2"
     >
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h2 className="font-title text-xl font-bold tracking-tight sm:text-2xl">
-            {title}
-          </h2>
-          {sub && (
-            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              {sub}
-            </p>
-          )}
+        <div className="flex items-center gap-2.5">
+          <span
+            className="h-6 w-[3px] shrink-0 rounded-full bg-primary"
+            aria-hidden="true"
+          />
+          <div>
+            <h2 className="font-title text-xl font-bold tracking-tight sm:text-2xl">
+              {title}
+            </h2>
+            {sub && (
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                {sub}
+              </p>
+            )}
+          </div>
         </div>
         {action}
       </div>
@@ -120,14 +131,21 @@ function SummaryCard({
   value,
   sub,
   tone,
+  tint = "tint-neutral-blue",
 }: {
   label: string;
   value: string;
   sub: string;
   tone?: string;
+  tint?: string;
 }) {
   return (
-    <div className="rounded-md border border-border bg-card px-3 py-3 sm:px-4 sm:py-4">
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-3 shadow-[0_1px_2px_rgba(45,55,90,0.05)] sm:px-4 sm:py-4",
+        tint,
+      )}
+    >
       <p className="text-[10px] font-semibold uppercase leading-tight tracking-[0.12em] text-muted-foreground">
         {label}
       </p>
@@ -144,9 +162,22 @@ function SummaryCard({
   );
 }
 
-function TodayMetric({ label, value }: { label: string; value: string }) {
+function TodayMetric({
+  label,
+  value,
+  tint = "tint-neutral-blue",
+}: {
+  label: string;
+  value: string;
+  tint?: string;
+}) {
   return (
-    <div className="rounded border border-border bg-background/60 px-3 py-2.5">
+    <div
+      className={cn(
+        "rounded-md border px-3 py-2.5 shadow-[0_1px_2px_rgba(45,55,90,0.04)]",
+        tint,
+      )}
+    >
       <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
@@ -162,11 +193,13 @@ function SpeciesCard({
   target,
   vaccinated,
   note,
+  tint = "tint-blue-soft",
 }: {
   name: string;
   target: number | null;
   vaccinated: number;
   note: string;
+  tint?: string;
 }) {
   const hasTarget = target !== null && target > 0;
   const remaining = hasTarget ? Math.max(0, target - vaccinated) : null;
@@ -174,7 +207,12 @@ function SpeciesCard({
     hasTarget ? Math.round((vaccinated / target) * 10000) / 100 : null;
 
   return (
-    <div className="rounded-md border border-border bg-card p-4">
+    <div
+      className={cn(
+        "rounded-lg border p-4 shadow-[0_1px_2px_rgba(45,55,90,0.05)]",
+        tint,
+      )}
+    >
       <div className="flex items-baseline justify-between gap-2">
         <h3 className="font-title text-lg font-bold uppercase tracking-wide">
           {name}
@@ -531,6 +569,13 @@ function DashboardView({
       : "PARTIALLY ALLOCATED";
   })();
 
+  /** Total of the village-target allocation table (import only). Distinct from
+      the programme target and from the Livestock Census goat population. */
+  const allocationTotal = Math.max(
+    overview.allocatedVillages > 0 ? overview.villageTargetSum : 0,
+    Object.values(scopeData.villageTargets).reduce((s, n) => s + n, 0),
+  );
+
   const lastUpdate =
     Math.max(overview.lastSuccess?.finishedAt ?? 0, overview.bharat.lastUploadAt ?? 0) ||
     null;
@@ -676,11 +721,13 @@ function DashboardView({
               label="Total PPR Vaccinated"
               value={nf.format(achievement)}
               sub="Valid unique vaccination records"
+              tint="tint-blue"
             />
             <SummaryCard
               label="Today's Vaccination"
               value={nf.format(today.total)}
               sub="Animals vaccinated today"
+              tint="tint-sky"
             />
             <SummaryCard
               label="Total Programme Target"
@@ -694,6 +741,7 @@ function DashboardView({
               value={completion !== null ? `${completion.toFixed(2)}%` : "—"}
               sub="Target completion"
               tone="text-primary"
+              tint="tint-blue"
             />
             <SummaryCard
               label="Remaining"
@@ -703,16 +751,18 @@ function DashboardView({
                   ? `Excess over target: ${nf.format(excess)}`
                   : "Animals remaining"
               }
+              tint="tint-amber"
             />
             <SummaryCard
               label="Bharat Pashudhan Data"
               value={nf.format(overview.bharat.uploadedRows)}
               sub="Total uploaded records"
+              tint="tint-lavender"
             />
           </div>
 
           {/* -------- Overall progress -------- */}
-          <div className="rounded-md border border-border bg-card px-4 py-5 sm:px-6">
+          <div className="tint-blue-soft rounded-lg border px-4 py-5 shadow-[0_1px_3px_rgba(45,55,90,0.06)] sm:px-6">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="font-title text-lg font-bold uppercase tracking-wide sm:text-xl">
                 Dispensary PPR Vaccination Progress
@@ -764,40 +814,47 @@ function DashboardView({
                   </div>
                 </dl>
 
-                {/* Programme target vs village allocation are two distinct
-                    concepts — shown separately, never merged. */}
-                <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border/60 pt-2.5 text-xs">
-                  <span className="text-muted-foreground">
-                    Programme Target:{" "}
+                {/* Three distinct concepts, never merged: programme target,
+                    village allocation table, Livestock Census population. */}
+                <div className="mt-3 border-t border-border/60 pt-2.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                    <span className="text-muted-foreground">
+                      Programme Target:{" "}
+                      <span className="font-semibold text-foreground tabular-nums">
+                        {nf.format(target)}
+                      </span>
+                    </span>
+                    {allocationTotal > 0 && (
+                      <span className="text-muted-foreground">
+                        Village Targets Allocated:{" "}
+                        <span className="font-semibold text-foreground tabular-nums">
+                          {nf.format(allocationTotal)}
+                        </span>
+                      </span>
+                    )}
+                    <span className="text-muted-foreground">
+                      Allocation Status:{" "}
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          allocationStatus === "PENDING"
+                            ? "text-destructive"
+                            : "text-primary",
+                        )}
+                      >
+                        {allocationStatus}
+                      </span>
+                    </span>
+                  </div>
+
+                  {/* Census population: reference information only, shown
+                      quieter and smaller so it never reads as a target. */}
+                  <p className="mt-2 inline-block rounded-md border border-primary/15 bg-primary/5 px-2.5 py-1 text-[11px] leading-tight text-muted-foreground">
+                    Goat Population (Livestock Census, Boginadi):{" "}
                     <span className="font-semibold text-foreground tabular-nums">
-                      {nf.format(target)}
+                      {nf.format(CENSUS_GOAT_POPULATION)}
                     </span>
-                  </span>
-                  <span className="text-muted-foreground">
-                    Village Targets Allocated:{" "}
-                    <span className="font-semibold text-foreground tabular-nums">
-                      {Math.max(
-                        overview.allocatedVillages > 0 ? overview.villageTargetSum : 0,
-                        Object.values(scopeData.villageTargets).reduce(
-                          (s, n) => s + n,
-                          0,
-                        ),
-                      )}
-                    </span>
-                  </span>
-                  <span className="text-muted-foreground">
-                    Allocation Status:{" "}
-                    <span
-                      className={cn(
-                        "font-semibold",
-                        allocationStatus === "PENDING"
-                          ? "text-destructive"
-                          : "text-primary",
-                      )}
-                    >
-                      {allocationStatus}
-                    </span>
-                  </span>
+                  </p>
                 </div>
 
                 {isScoped && (
@@ -850,6 +907,7 @@ function DashboardView({
               target={overview.sheepTarget}
               vaccinated={overview.sheepAchievement}
               note="NADCP tagging"
+              tint="tint-neutral-blue"
             />
           </div>
         </section>
@@ -862,9 +920,13 @@ function DashboardView({
             sub={`Date: ${format(new Date(), "d MMMM yyyy")}`}
           />
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-            <TodayMetric label="Total animals today" value={nf.format(today.total)} />
-            <TodayMetric label="Goats" value={nf.format(today.goats)} />
-            <TodayMetric label="Sheep" value={nf.format(today.sheep)} />
+            <TodayMetric
+              label="Total animals today"
+              value={nf.format(today.total)}
+              tint="tint-blue"
+            />
+            <TodayMetric label="Goats" value={nf.format(today.goats)} tint="tint-blue-soft" />
+            <TodayMetric label="Sheep" value={nf.format(today.sheep)} tint="tint-blue-soft" />
             <TodayMetric label="Farmers covered" value={nf.format(today.farmers)} />
             <TodayMetric label="Vaccinators active" value={nf.format(today.vaccinators)} />
             <TodayMetric label="Villages covered" value={nf.format(today.villages)} />
