@@ -54,6 +54,18 @@ function dayLabel(value?: string | null) {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : value;
 }
 
+/** "2026-09-22" → "22 Sep 2026" for the Programme Start header field. */
+function longDay(value?: string | null) {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+  if (!m) return value;
+  const months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  return `${Number(m[3])} ${months[Number(m[2]) - 1]} ${m[1]}`;
+}
+
 function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({
     behavior: "smooth",
@@ -168,7 +180,7 @@ function SpeciesCard({
         <div className="flex items-baseline justify-between gap-3 border-b border-border/60 pb-1.5">
           <dt className="text-muted-foreground">Target</dt>
           <dd className="font-semibold tabular-nums">
-            {hasTarget ? nf.format(target) : "Target not allocated"}
+            {hasTarget ? nf.format(target) : "Not allocated"}
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-3 border-b border-border/60 pb-1.5">
@@ -511,7 +523,7 @@ function DashboardView({
                 Programme Start:
               </dt>
               <dd className="font-semibold tabular-nums">
-                {dayLabel(overview.vaccinationStartDate) ?? "Not set"}
+                {longDay(overview.vaccinationStartDate) ?? "Not set"}
               </dd>
             </div>
             <div className="flex items-baseline gap-2">
@@ -595,16 +607,10 @@ function DashboardView({
               sub="Animals vaccinated today"
             />
             <SummaryCard
-              label="Total Target"
+              label="Total Programme Target"
               value={hasTarget ? nf.format(target) : "—"}
               sub={
-                hasTarget
-                  ? overview.targetSource === "district"
-                    ? "Active district target"
-                    : overview.targetSource === "villages"
-                      ? "Sum of village allocations"
-                      : "Programme target"
-                  : "Target data pending admin setup"
+                hasTarget ? "District programme target" : "Target data pending admin setup"
               }
             />
             <SummaryCard
@@ -681,6 +687,36 @@ function DashboardView({
                     </dd>
                   </div>
                 </dl>
+
+                {/* Programme target vs village allocation are two distinct
+                    concepts — shown separately, never merged. */}
+                <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border/60 pt-2.5 text-xs">
+                  <span className="text-muted-foreground">
+                    Programme Target:{" "}
+                    <span className="font-semibold text-foreground tabular-nums">
+                      {nf.format(target)}
+                    </span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    Village Targets Allocated:{" "}
+                    <span className="font-semibold text-foreground tabular-nums">
+                      {overview.allocatedVillages}
+                    </span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    Allocation Status:{" "}
+                    <span
+                      className={cn(
+                        "font-semibold",
+                        overview.allocatedVillages > 0
+                          ? "text-primary"
+                          : "text-destructive",
+                      )}
+                    >
+                      {overview.allocatedVillages > 0 ? "ACTIVE" : "PENDING"}
+                    </span>
+                  </span>
+                </div>
               </>
             ) : (
               <div className="mt-3 rounded border border-dashed border-border bg-muted/50 px-4 py-6 text-center">
@@ -843,7 +879,7 @@ function DashboardView({
               </div>
               <dl className="mt-2 space-y-1.5">
                 <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">Total uploaded</dt>
+                  <dt className="text-muted-foreground">Uploaded records</dt>
                   <dd className="tabular-nums">
                     {nf.format(overview.bharat.uploadedRows)}
                   </dd>
@@ -855,7 +891,13 @@ function DashboardView({
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">Duplicates skipped</dt>
+                  <dt className="text-muted-foreground">Rejected records</dt>
+                  <dd className="tabular-nums">
+                    {nf.format(overview.bharat.rejectedRecords)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted-foreground">Duplicate records skipped</dt>
                   <dd className="tabular-nums">
                     {nf.format(overview.bharat.duplicatesSkipped)}
                   </dd>

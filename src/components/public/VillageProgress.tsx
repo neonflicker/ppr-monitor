@@ -16,7 +16,7 @@ type Row = {
   achievement: number;
   goatAchievement: number;
   sheepAchievement: number;
-  remaining: number;
+  remaining: number | null;
   excess: number;
   completion: number | null;
   status: string;
@@ -352,7 +352,7 @@ export default function VillageProgress() {
                   {nf.format(row.achievement)}
                 </td>
                 <td className="py-2.5 pr-3 text-right tabular-nums">
-                  {nf.format(row.remaining)}
+                  {row.remaining === null ? "—" : nf.format(row.remaining)}
                 </td>
                 <td className="py-2.5 pr-3 text-right font-semibold tabular-nums">
                   {completionLabel(row)}
@@ -385,17 +385,19 @@ export default function VillageProgress() {
               <td className="px-3 py-2.5 uppercase tracking-wider">
                 District Total
               </td>
-              <td className="py-2.5 pr-3 text-right tabular-nums">
+              <td className="py-2.5 pr-3 text-right tabular-nums" title="Village Target Allocated">
                 {nf.format(t.target)}
               </td>
-              <td className="py-2.5 pr-3 text-right tabular-nums">
-                {nf.format(t.achievement)}
+              <td className="py-2.5 pr-3 text-right tabular-nums" title="All validated achievement, allocated and unallocated">
+                {nf.format(t.achievement + data.unallocatedAchievement)}
               </td>
               <td className="py-2.5 pr-3 text-right tabular-nums">
-                {nf.format(t.remaining)}
+                {data.hasAllocation ? nf.format(t.remaining) : "—"}
               </td>
               <td className="py-2.5 pr-3 text-right tabular-nums">
-                {t.completion === null ? "—" : `${t.completion.toFixed(2)}%`}
+                {!data.hasAllocation || t.completion === null
+                  ? "—"
+                  : `${t.completion.toFixed(2)}%`}
               </td>
               <td className="py-2.5 pr-3 text-right tabular-nums">
                 {nf.format(t.goatTarget)}
@@ -450,7 +452,10 @@ export default function VillageProgress() {
                 value={row.allocated ? nf.format(row.target) : "—"}
               />
               <Metric label="Achievement" value={nf.format(row.achievement)} />
-              <Metric label="Remaining" value={nf.format(row.remaining)} />
+              <Metric
+                label="Remaining"
+                value={row.remaining === null ? "—" : nf.format(row.remaining)}
+              />
               <Metric label="Completion" value={completionLabel(row)} />
               <Metric
                 label="Goat T / A"
@@ -470,43 +475,57 @@ export default function VillageProgress() {
         ))}
       </div>
 
-      {/* ---- District totals ---- */}
-      {data.hasAllocation ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Metric label="Total Target" value={nf.format(t.target)} />
-          <Metric label="Total Achievement" value={nf.format(t.achievement)} />
-          <Metric label="Remaining" value={nf.format(t.remaining)} />
+      {/* ---- District totals: programme target vs village allocation,
+              never silently merged ---- */}
+      <div className="rounded-md border border-border bg-card px-3 py-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          District Total
+        </p>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Metric
-            label="Completion"
-            value={t.completion === null ? "—" : `${t.completion.toFixed(2)}%`}
+            label="District Programme Target"
+            value={
+              data.programmeTarget !== null ? nf.format(data.programmeTarget) : "—"
+            }
+          />
+          <Metric
+            label="Village Target Allocated"
+            value={nf.format(data.allocatedTargetSum)}
+          />
+          <Metric
+            label="Achievement"
+            value={nf.format(data.totalAchievement)}
             tone="text-primary"
           />
+          {data.hasAllocation && data.allocatedTargetSum > 0 && (
+            <>
+              <Metric
+                label="Village Remaining"
+                value={nf.format(t.remaining)}
+              />
+              <Metric
+                label="Village Completion"
+                value={t.completion === null ? "—" : `${t.completion.toFixed(2)}%`}
+              />
+            </>
+          )}
         </div>
-      ) : (
-        <div className="rounded border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-          <p className="font-semibold uppercase tracking-wider">
-            No village target allocation yet
+      </div>
+
+      {/* ---- Allocation notice (§7): only while no village carries a target ---- */}
+      {data.allocatedTargetSum === 0 && data.unallocatedAchievement > 0 && (
+        <div className="rounded border border-dashed border-border bg-muted/40 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+          <p className="font-semibold uppercase tracking-wider text-foreground">
+            Village-level targets have not yet been allocated.
           </p>
           <p className="mt-1">
-            Village-wise totals appear here as soon as the administrator allocates
-            targets. Until then the district target is shown at programme level.
-            {unallocatedAchievement > 0 &&
-              ` ${nf.format(unallocatedAchievement)} animals are recorded across ${data.unallocatedCount} village(s) without an allocated target.`}
+            {nf.format(data.unallocatedAchievement)} vaccination records are already
+            recorded across {data.unallocatedCount} village
+            {data.unallocatedCount !== 1 ? "s" : ""}. These records are included in
+            district programme achievement but remain UNALLOCATED until village
+            targets are assigned.
           </p>
         </div>
-      )}
-
-      {!data.hasAllocation && unallocatedAchievement === 0 && rows.length === 0 && (
-        <p className="rounded border border-dashed border-border px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Target data pending admin setup
-        </p>
-      )}
-      {data.unallocatedCount > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {data.unallocatedCount} village{data.unallocatedCount > 1 ? "s have" : " has"}{" "}
-          vaccination records but no allocated target yet — listed as UNALLOCATED and
-          excluded from the district target total.
-        </p>
       )}
     </div>
   );

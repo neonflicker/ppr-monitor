@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import { readSettingsDoc } from "./settings";
-import { normalizeName } from "./lib/villageMatch";
+import { aggregateWithPersonnel, type AggregateRecord } from "./lib/dayAggregate";
 
 type Bucket = "departmental" | "semi" | "private";
 
@@ -38,95 +38,87 @@ export const compute = query({
   args: { dateKey: v.string() },
   handler: async (ctx, { dateKey }) => {
     const settings = await readSettingsDoc(ctx);
-    const lists = {
-      departmental: settings.personnelDepartmental,
-      semi: settings.personnelSemiGovernment,
-      private: settings.personnelPrivate,
-    };
 
-    let goats = 0;
-    let sheep = 0;
-    let unspecified = 0;
-    let taggedGoat = 0;
-    let taggedSheep = 0;
-    let farmers = 0;
-    let wastedFromData = 0;
-    let recordsOnDate = 0;
-    const bySource = {
-      google_sheet: { goats: 0, sheep: 0, farmers: 0, records: 0 },
-      bharat_pashudhan: { goats: 0, sheep: 0, farmers: 0, records: 0 },
-    };
-    const people = new Map<string, { name: string; designation: string }>();
-
+    const records: AggregateRecord[] = [];
     for await (const rec of ctx.db
       .query("vaccinationRecords")
       .withIndex("by_dateKey", (q) => q.eq("dateKey", dateKey))) {
-      if (rec.status !== "valid" || !rec.isPpr) continue;
-      recordsOnDate++;
-      goats += rec.goats;
-      sheep += rec.sheep;
-      unspecified += rec.unspecified ?? 0;
-      taggedGoat += rec.taggedGoat;
-      taggedSheep += rec.taggedSheep;
-      farmers += rec.farmers;
-      wastedFromData += rec.wasted;
-      const bucket = bySource[rec.source];
-      if (bucket) {
-        bucket.goats += rec.goats;
-        bucket.sheep += rec.sheep;
-        bucket.farmers += rec.farmers;
-        bucket.records += 1;
-      }
-      if (rec.vaccinator) {
-        const key = normalizeName(rec.vaccinator);
-        if (key && !people.has(key)) {
-          people.set(key, {
-            name: rec.vaccinator.trim(),
-            designation: (rec.designation ?? "").trim(),
-          });
-        }
-      }
+      records.push({
+        status: rec.status,
+        isPpr: rec.isPpr,
+        source: rec.source,
+        dateKey: rec.dateKey,
+        goats: rec.goats,
+        sheep: rec.sheep,
+        unspecified: rec.unspecified,
+        farmers: rec.farmers,
+        wasted: rec.wasted,
+        taggedGoat: rec.taggedGoat,
+        taggedSheep: rec.taggedSheep,
+        village: rec.village,
+        vaccinator: rec.vaccinator,
+        designation: rec.designation,
+      });
     }
 
+    // ONE aggregation layer — the same engine the dashboard uses.
+    const agg = aggregateWithPersonnel(records, {
+      departmental: settings.personnelDepartmental,
+      semi: settings.personnelSemiGovernment,
+      private: settings.personnelPrivate,
+    });
+
     const personnel = {
-      departmental: [] as { name: string; designation: string }[],
-      semiGovernment: [] as { name: string; designation: string }[],
-      private: [] as { name: string; designation: string }[],
-      unclassified: [] as { name: string; designation: string }[],
+      departmental: agg.personnelNames.departmental.map((name) => ({
+        name,
+        designation: "",
+      })),
+      semiGovernment: agg.personnelNames.semi.map((name) => ({
+        name,
+        designation: "",
+      })),
+      private: agg.personnelNames.private.map((name) => ({
+        name,
+        designation: "",
+      })),
+      unclassified: agg.personnelNames.unclassified.map((name) => ({
+        name,
+        designation: "",
+      })),
     };
-    for (const person of people.values()) {
-      const bucket = classifyDesignation(person.designation, lists);
-      if (bucket === "departmental") personnel.departmental.push(person);
-      else if (bucket === "semi") personnel.semiGovernment.push(person);
-      else if (bucket === "private") personnel.private.push(person);
-      else personnel.unclassified.push(person);
-    }
-    personnel.departmental.sort((a, b) => a.name.localeCompare(b.name));
-    personnel.semiGovernment.sort((a, b) => a.name.localeCompare(b.name));
-    personnel.private.sort((a, b) => a.name.localeCompare(b.name));
-    personnel.unclassified.sort((a, b) => a.name.localeCompare(b.name));
 
     return {
       dateKey,
       district: settings.districtName,
       vaccinationStartDate: settings.vaccinationStartDate ?? null,
       defaultWasted: settings.defaultWasted ?? 0,
-      goats,
-      sheep,
-      unspecified,
-      taggedGoat,
-      taggedSheep,
-      taggedTotal: taggedGoat + taggedSheep,
-      farmers,
-      wastedFromData,
-      recordsOnDate,
-      bySource,
-      personnelCounts: {
-        departmental: personnel.departmental.length,
-        semiGovernment: personnel.semiGovernment.length,
-        private: personnel.private.length,
-        unclassified: personnel.unclassified.length,
+      animalsTotal: agg.animalsTotal,
+      goats: agg.goats,
+      sheep: agg.sheep,
+      unspecified: agg.unspecified,
+      taggedGoat: agg.taggedGoat,
+      taggedSheep: agg.taggedSheep,
+      taggedTotal: agg.taggedAnimals,
+      farmers: agg.farmers,
+      wastedFromData: agg.wastedDoses,
+      vaccinators: agg.vaccinators,
+      villages: agg.villages,
+      recordsOnDate: agg.records,
+      bySource: {
+        google_sheet: {
+          goats: agg.bySource.google_sheet.goats,
+          sheep: agg.bySource.google_sheet.sheep,
+          farmers: agg.bySource.google_sheet.farmers,
+          records: agg.bySource.google_sheet.records,
+        },
+        bharat_pashudhan: {
+          goats: agg.bySource.bharat_pashudhan.goats,
+          sheep: agg.bySource.bharat_pashudhan.sheep,
+          farmers: agg.bySource.bharat_pashudhan.farmers,
+          records: agg.bySource.bharat_pashudhan.records,
+        },
       },
+      personnelCounts: agg.personnel,
       personnel,
     };
   },

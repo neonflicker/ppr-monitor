@@ -3,6 +3,10 @@ import { query, type QueryCtx } from "./_generated/server";
 import { readSettingsDoc } from "./settings";
 import { getActiveVersion, villageTargetTotals } from "./targets";
 import { matchVillage, normalizeVillage } from "./lib/villageMatch";
+import {
+  aggregateByDay,
+  type AggregateRecord,
+} from "./lib/dayAggregate";
 
 /** Status buckets derived from completion % (never entered manually). */
 export function statusFor(completion: number | null): string {
@@ -141,13 +145,17 @@ export const overview = query({
         : null;
 
     // ---- Bharat Pashudhan upload summary ----
+    // Uploaded rows ≠ achievement: uploaded/valid/rejected/duplicates are
+    // reported separately so nobody reads an upload count as vaccinations.
     const uploads = await ctx.db.query("bharatUploads").collect();
     let lastUploadAt: number | null = null;
     let uploadedRows = 0;
     let duplicatesSkipped = 0;
+    let bharatRejected = 0;
     for (const upload of uploads) {
       uploadedRows += upload.totalRows;
       duplicatesSkipped += upload.duplicateRows + upload.crossSourceDuplicates;
+      bharatRejected += upload.rejectedRows;
       if (lastUploadAt === null || upload.uploadedAt > lastUploadAt) {
         lastUploadAt = upload.uploadedAt;
       }
@@ -193,6 +201,9 @@ export const overview = query({
           }
         : null,
       villageTargetSum,
+      // Allocation status: how many villages actually carry an active target
+      // record (even a deliberate zero), and the sum of those allocations.
+      allocatedVillages: byVillage.size,
       goatTarget: goatTargetSum > 0 ? goatTargetSum : null,
       sheepTarget: sheepTargetSum > 0 ? sheepTargetSum : null,
 
@@ -229,6 +240,7 @@ export const overview = query({
         uploadedRows,
         validRecords: bharatRecords,
         duplicatesSkipped,
+        rejectedRecords: bharatRejected,
         lastUploadAt,
       },
       lastSync,
@@ -269,6 +281,8 @@ export const todayByVaccinator = query({
       };
       entry.goats += rec.goats;
       entry.sheep += rec.sheep + (rec.unspecified ?? 0);
+      // Total is always Goats + Sheep — the same sum the dashboard cards use.
+      entry.total = entry.goats + entry.sheep;
       if (rec.village) entry.villages.add(rec.village.toLowerCase());
       rows.set(key, entry);
       totals.goats += rec.goats;
@@ -282,7 +296,7 @@ export const todayByVaccinator = query({
         villages: r.villages.size,
         goats: r.goats,
         sheep: r.sheep,
-        total: r.total,
+        total: r.goats + r.sheep,
       }))
       .sort((a, b) => b.total - a.total);
     totals.vaccinators = list.length;
@@ -335,6 +349,20 @@ export const villageProgress = query({
       achievementByKey.set(key, entry);
     }
 
+    // Village allocation status: a village counts as allocated only when an
+    // active target record exists for it (even if that target is explicitly 0).
+    let allocatedVillages = 0;
+    let allocatedTargetSum = 0;
+    for (const entry of byVillage.values()) {
+      allocatedVillages += 1;
+      allocatedTargetSum += entry.target;
+    }
+    const hasAllocation = version !== null && allocatedVillages > 0;
+    // Programme target (settings) is authoritative for the DISTRICT.
+    const settings = await readSettingsDoc(ctx);
+    const settingsProgrammeTarget = settings.programmeTarget ?? 0;
+    const programmeTarget = settingsProgrammeTarget > 0 ? settingsProgrammeTarget : null;
+
     const targetNames = [...byVillage.values()].map((t) => t.village);
     const rows: {
       village: string;
@@ -345,7 +373,7 @@ export const villageProgress = query({
       achievement: number;
       goatAchievement: number;
       sheepAchievement: number;
-      remaining: number;
+      remaining: number | null;
       excess: number;
       completion: number | null;
       status: string;
@@ -357,6 +385,9 @@ export const villageProgress = query({
       const hit = achievementByKey.get(key);
       if (hit) matched.add(key);
       const achievement = hit?.total ?? 0;
+      // §13: Village Target = 0 → UNALLOCATED semantics (no completion, no
+      // remaining) until the administrator allocates a positive target.
+      const zeroTarget = target.target <= 0;
       const completion =
         target.target > 0
           ? Math.round((achievement / target.target) * 10000) / 100
@@ -370,10 +401,11 @@ export const villageProgress = query({
         achievement,
         goatAchievement: hit?.goats ?? 0,
         sheepAchievement: (hit?.sheep ?? 0) + (hit?.unspecified ?? 0),
-        remaining: Math.max(0, target.target - achievement),
-        excess: Math.max(0, achievement - target.target),
+        remaining:
+          target.target > 0 ? Math.max(0, target.target - achievement) : null,
+        excess: target.target > 0 ? Math.max(0, achievement - target.target) : 0,
         completion,
-        status: statusFor(completion),
+        status: zeroTarget ? "UNALLOCATED" : statusFor(completion),
         allocated: true,
       });
     }
@@ -381,11 +413,13 @@ export const villageProgress = query({
     // Achievement villages that are not in the allocation — shown, not hidden.
     const unallocated: typeof rows = [];
     const targetNameList = targetNames;
+    let unallocatedAchievement = 0;
     for (const [key, hit] of achievementByKey) {
       if (matched.has(key)) continue;
       if (byVillage.has(key)) continue;
       const suggestion = matchVillage(hit.raw, targetNameList);
       if (suggestion.kind === "exact" && suggestion.canonical) continue;
+      unallocatedAchievement += hit.total;
       unallocated.push({
         village: hit.raw,
         target: 0,
@@ -394,8 +428,8 @@ export const villageProgress = query({
         achievement: hit.total,
         goatAchievement: hit.goats,
         sheepAchievement: hit.sheep + hit.unspecified,
-        remaining: 0,
-        excess: hit.total,
+        remaining: null,
+        excess: 0,
         completion: null,
         status: "UNALLOCATED",
         allocated: false,
@@ -428,7 +462,7 @@ export const villageProgress = query({
       .reduce((s, r) => s + r.achievement, 0);
 
     return {
-      hasAllocation: version !== null && rows.some((r) => r.allocated),
+      hasAllocation,
       versionNumber: version?.versionNumber ?? null,
       rows,
       totals: {
@@ -440,6 +474,15 @@ export const villageProgress = query({
             : null,
       },
       unallocatedCount: unallocated.length,
+      // Programme-level context so the table footer can distinguish the
+      // DISTRICT PROGRAMME TARGET from the sum of VILLAGE allocations.
+      programmeTarget,
+      allocatedVillages,
+      allocatedTargetSum,
+      unallocatedAchievement,
+      totalAchievement:
+        totals.achievement +
+        rows.filter((r) => !r.allocated).reduce((s, r) => s + r.achievement, 0),
     };
   },
 });
@@ -508,37 +551,48 @@ export const vaccinatorProgress = query({
   },
 });
 
-/** HISTORICAL SERIES: daily + cumulative vaccination. */
+/**
+ * HISTORICAL SERIES: daily + cumulative vaccination, built from the SAME
+ * normalised per-day aggregation engine as the report and dashboard figures.
+ */
 export const dailySeries = query({
   args: { fromKey: v.optional(v.string()) },
   handler: async (ctx, { fromKey }) => {
-    const daily = new Map<
-      string,
-      { goats: number; sheep: number; farmers: number; total: number }
-    >();
+    const records: AggregateRecord[] = [];
     for await (const rec of ctx.db
       .query("vaccinationRecords")
       .withIndex("by_status", (q) => q.eq("status", "valid"))) {
-      if (!rec.isPpr || !rec.dateKey) continue;
-      if (fromKey && rec.dateKey < fromKey) continue;
-      const entry = daily.get(rec.dateKey) ?? {
-        goats: 0,
-        sheep: 0,
-        farmers: 0,
-        total: 0,
-      };
-      entry.goats += rec.goats;
-      entry.sheep += rec.sheep + (rec.unspecified ?? 0);
-      entry.farmers += rec.farmers;
-      entry.total += rec.goats + rec.sheep + (rec.unspecified ?? 0);
-      daily.set(rec.dateKey, entry);
+      records.push({
+        status: rec.status,
+        isPpr: rec.isPpr,
+        source: rec.source,
+        dateKey: rec.dateKey,
+        goats: rec.goats,
+        sheep: rec.sheep,
+        unspecified: rec.unspecified,
+        farmers: rec.farmers,
+        wasted: rec.wasted,
+        taggedGoat: rec.taggedGoat,
+        taggedSheep: rec.taggedSheep,
+        village: rec.village,
+        vaccinator: rec.vaccinator,
+        designation: rec.designation,
+      });
     }
-    const keys = [...daily.keys()].sort();
+    const days = aggregateByDay(records, { fromKey });
     let cumulative = 0;
-    const series = keys.map((dateKey) => {
-      const entry = daily.get(dateKey)!;
-      cumulative += entry.total;
-      return { dateKey, ...entry, cumulative };
+    const series = days.map((day) => {
+      cumulative += day.animalsTotal;
+      return {
+        dateKey: day.dateKey,
+        goats: day.goats,
+        sheep: day.sheep + day.unspecified,
+        farmers: day.farmers,
+        total: day.animalsTotal,
+        vaccinators: day.vaccinators,
+        villages: day.villages,
+        cumulative,
+      };
     });
     return { series, total: cumulative };
   },
