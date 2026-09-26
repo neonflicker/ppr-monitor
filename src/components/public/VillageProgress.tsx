@@ -1,4 +1,6 @@
 import { Input } from "@/components/ui/input";
+import { normalizeVillageClient } from "@/lib/scopeKeys";
+import { statusFor } from "@/lib/statusFor";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
@@ -154,19 +156,83 @@ function Metric({
   );
 }
 
-export default function VillageProgress() {
+export interface VillageScopeProps {
+  /** Selected scope from the public filter bar ("ALL" or keys). */
+  scope?: { user: string; village: string };
+  /** Active allocation scope data (user → villages, village → target). */
+  scopeData?: {
+    available: boolean;
+    users: { key: string; name: string; target: number; villages: string[] }[];
+    villageNames: Record<string, string>;
+    villageTargets: Record<string, number>;
+  };
+}
+
+export default function VillageProgress({
+  scope = { user: "ALL", village: "ALL" },
+  scopeData,
+}: VillageScopeProps = {}) {
   const data = useQuery(api.stats.villageProgress, {});
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("village");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
 
-  const rows = data?.rows ?? [];
+  // Scope keys: the allocation row keys are already normalised server-side.
+  const selectedVillageKey = scope.village === "ALL" ? null : scope.village;
+  const selectedUser =
+    scope.user === "ALL"
+      ? null
+      : (scopeData?.users.find((u) => u.key === scope.user) ?? null);
+  const userVillageKeys =
+    selectedUser === null ? null : new Set(selectedUser.villages);
+
+  // Allocation targets per village key from the active import (§14: the
+  // allocation file is the TARGET source for the filtered views).
+  const allocationTargets = scopeData?.villageTargets ?? {};
+
+  const rows = useMemo(() => {
+    const base = data?.rows ?? [];
+    return base.map((row) => {
+      const key = normalizeVillageClient(row.village);
+      const allocationTarget = allocationTargets[key];
+      const effectiveTarget =
+        allocationTarget !== undefined ? allocationTarget : row.target;
+      const zeroTarget = effectiveTarget <= 0;
+      const completion =
+        effectiveTarget > 0
+          ? Math.round((row.achievement / effectiveTarget) * 10000) / 100
+          : null;
+      return {
+        ...row,
+        target: effectiveTarget,
+        remaining: effectiveTarget > 0 ? Math.max(0, effectiveTarget - row.achievement) : null,
+        excess:
+          effectiveTarget > 0 ? Math.max(0, row.achievement - effectiveTarget) : 0,
+        completion,
+        status:
+          allocationTarget === undefined && !row.allocated
+            ? "UNALLOCATED"
+            : zeroTarget
+              ? "UNALLOCATED"
+              : statusFor(completion),
+        allocated: row.allocated || allocationTarget !== undefined,
+      };
+    });
+  }, [data, allocationTargets]);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const filterDef = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
     const list = rows.filter((row) => {
+      // Scope filters (§13, §17): village first, then user's allotted set.
+      if (selectedVillageKey) {
+        const key = normalizeVillageClient(row.village);
+        if (key !== selectedVillageKey) return false;
+      } else if (userVillageKeys && row.allocated) {
+        const key = normalizeVillageClient(row.village);
+        if (!userVillageKeys.has(key)) return false;
+      }
       if (needle && !row.village.toLowerCase().includes(needle)) return false;
       return filterDef.test(row as Row);
     });
@@ -201,6 +267,29 @@ export default function VillageProgress() {
   }
 
   const t = data.totals;
+  // Scoped sums over the (allocation-adjusted, scope-filtered) rows.
+  const scopedVisible = visible.length > 0 || rows.length === 0 ? visible : rows;
+  const scopedTotals = useMemo(() => {
+    const sum = scopedVisible.reduce(
+      (acc, row) => {
+        acc.achievement += row.achievement;
+        if (row.target > 0) {
+          acc.target += row.target;
+          acc.remaining += row.remaining ?? 0;
+        }
+        return acc;
+      },
+      { achievement: 0, target: 0, remaining: 0 },
+    );
+    return {
+      ...sum,
+      completion:
+        sum.target > 0
+          ? Math.round((sum.achievement / sum.target) * 10000) / 100
+          : null,
+    };
+  }, [scopedVisible]);
+
   const unallocatedAchievement = rows
     .filter((row) => !row.allocated)
     .reduce((sum, row) => sum + row.achievement, 0);
@@ -383,7 +472,7 @@ export default function VillageProgress() {
           <tfoot>
             <tr className="border-t-2 border-border bg-muted/60 text-sm font-semibold">
               <td className="px-3 py-2.5 uppercase tracking-wider">
-                District Total
+                Dispensary Total
               </td>
               <td className="py-2.5 pr-3 text-right tabular-nums" title="Village Target Allocated">
                 {nf.format(t.target)}
@@ -475,55 +564,97 @@ export default function VillageProgress() {
         ))}
       </div>
 
-      {/* ---- District totals: programme target vs village allocation,
-              never silently merged ---- */}
+      {/* ---- Dispensary totals: programme target vs village allocation,
+              never silently merged. When a scope filter is active the scoped
+              sums replace the whole-dispensary numbers. ---- */}
       <div className="rounded-md border border-border bg-card px-3 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          District Total
+          {scope.user !== "ALL" || scope.village !== "ALL"
+            ? "Filtered Total"
+            : "Dispensary Total"}
         </p>
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <Metric
-            label="District Programme Target"
-            value={
-              data.programmeTarget !== null ? nf.format(data.programmeTarget) : "—"
-            }
-          />
-          <Metric
-            label="Village Target Allocated"
-            value={nf.format(data.allocatedTargetSum)}
-          />
-          <Metric
-            label="Achievement"
-            value={nf.format(data.totalAchievement)}
-            tone="text-primary"
-          />
-          {data.hasAllocation && data.allocatedTargetSum > 0 && (
-            <>
-              <Metric
-                label="Village Remaining"
-                value={nf.format(t.remaining)}
-              />
-              <Metric
-                label="Village Completion"
-                value={t.completion === null ? "—" : `${t.completion.toFixed(2)}%`}
-              />
-            </>
-          )}
-        </div>
+        {scope.user !== "ALL" || scope.village !== "ALL" ? (
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Metric
+              label="Scope Target"
+              value={nf.format(scopedTotals.target)}
+            />
+            <Metric
+              label="Scope Achievement"
+              value={nf.format(scopedTotals.achievement)}
+              tone="text-primary"
+            />
+            <Metric
+              label="Scope Remaining"
+              value={nf.format(scopedTotals.remaining)}
+            />
+            <Metric
+              label="Scope Completion"
+              value={
+                scopedTotals.completion === null
+                  ? "—"
+                  : `${scopedTotals.completion.toFixed(2)}%`
+              }
+            />
+          </div>
+        ) : (
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <Metric
+              label="Dispensary Programme Target"
+              value={
+                data.programmeTarget !== null ? nf.format(data.programmeTarget) : "—"
+              }
+            />
+            <Metric
+              label="Village Target Allocated"
+              value={nf.format(
+                Math.max(
+                  data.allocatedTargetSum,
+                  Object.values(scopeData?.villageTargets ?? {}).reduce(
+                    (s, n) => s + n,
+                    0,
+                  ),
+                ),
+              )}
+            />
+            <Metric
+              label="Achievement"
+              value={nf.format(
+                Math.max(
+                  data.totalAchievement,
+                  rows.reduce((s, r) => s + r.achievement, 0),
+                ),
+              )}
+              tone="text-primary"
+            />
+            {data.hasAllocation && data.allocatedTargetSum > 0 && (
+              <>
+                <Metric label="Village Remaining" value={nf.format(t.remaining)} />
+                <Metric
+                  label="Village Completion"
+                  value={
+                    t.completion === null ? "—" : `${t.completion.toFixed(2)}%`
+                  }
+                />
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* ---- Allocation notice (§7): only while no village carries a target ---- */}
-      {data.allocatedTargetSum === 0 && data.unallocatedAchievement > 0 && (
+      {/* ---- Allocation notice (§7): only while villages still carry no
+              target after the active allocation file is applied ---- */}
+      {unallocatedAchievement > 0 && (
         <div className="rounded border border-dashed border-border bg-muted/40 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
           <p className="font-semibold uppercase tracking-wider text-foreground">
             Village-level targets have not yet been allocated.
           </p>
           <p className="mt-1">
-            {nf.format(data.unallocatedAchievement)} vaccination records are already
-            recorded across {data.unallocatedCount} village
-            {data.unallocatedCount !== 1 ? "s" : ""}. These records are included in
-            district programme achievement but remain UNALLOCATED until village
-            targets are assigned.
+            {nf.format(unallocatedAchievement)} vaccination records are already
+            recorded across {rows.filter((row) => !row.allocated).length} village
+            {rows.filter((row) => !row.allocated).length !== 1 ? "s" : ""}. These
+            records are included in dispensary programme achievement but remain
+            UNALLOCATED until village targets are assigned.
           </p>
         </div>
       )}

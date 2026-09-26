@@ -19,6 +19,7 @@ import { toast } from "sonner";
 
 type SettingsSource = {
   districtName: string;
+  dispensaryName?: string;
   state: string;
   sheetUrl: string;
   sheetGid: string;
@@ -40,6 +41,7 @@ export function SettingsDialog({
   const updateSettings = useAction(api.adminAuth.updateSettings);
 
   const [districtName, setDistrictName] = useState("");
+  const [dispensaryName, setDispensaryName] = useState("");
   const [stateName, setStateName] = useState("");
   const [target, setTarget] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -52,6 +54,7 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) {
       setDistrictName(overview.districtName);
+      setDispensaryName(overview.dispensaryName ?? overview.districtName);
       setStateName(overview.state);
       setTarget(overview.target ? String(overview.target) : "");
       setStartDate(overview.vaccinationStartDate ?? "");
@@ -86,6 +89,7 @@ export function SettingsDialog({
       await updateSettings({
         token,
         districtName: districtName.trim(),
+        dispensaryName: dispensaryName.trim(),
         state: stateName.trim(),
         sheetUrl: sheetUrl.trim(),
         sheetGid: sheetGid.trim(),
@@ -140,6 +144,20 @@ export function SettingsDialog({
             />
             <p className="text-xs text-muted-foreground">
               Total PPR vaccination target for the district. Leave empty to clear.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="dispensary">Dispensary name</Label>
+            <Input
+              id="dispensary"
+              value={dispensaryName}
+              onChange={(e) => setDispensaryName(e.target.value)}
+              disabled={busy}
+            />
+            <p className="text-xs text-muted-foreground">
+              Operational unit shown across the dashboard and reports (e.g. SVD
+              BOGINADI).
             </p>
           </div>
 

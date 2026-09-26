@@ -3,6 +3,7 @@ import BharatUpload from "@/components/admin/BharatUpload";
 import DataValidation from "@/components/admin/DataValidation";
 import ImportHistory from "@/components/admin/ImportHistory";
 import TargetAllocation from "@/components/admin/TargetAllocation";
+import UserVillageAllocation from "@/components/admin/UserVillageAllocation";
 import { Mark } from "@/components/Mark";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { Button } from "@/components/ui/button";
@@ -20,20 +21,29 @@ import {
   Settings2,
   Target,
   UploadCloud,
+  Users,
   Gauge,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
-type TabId = "status" | "upload" | "targets" | "history" | "validation" | "settings";
+type TabId =
+  | "status"
+  | "upload"
+  | "allocation"
+  | "targets"
+  | "history"
+  | "validation"
+  | "settings";
 
 const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
   { id: "status", label: "Status", icon: Gauge },
-  { id: "upload", label: "Bharat Pashudhan Upload", icon: UploadCloud },
-  { id: "targets", label: "Target Allocation", icon: Target },
+  { id: "upload", label: "BharatPashudhan Import", icon: UploadCloud },
+  { id: "allocation", label: "User & Village Allocation", icon: Users },
+  { id: "targets", label: "Manual Village Targets", icon: Target },
   { id: "history", label: "Import History", icon: History },
   { id: "validation", label: "Data Validation", icon: ClipboardCheck },
-  { id: "settings", label: "Settings", icon: Settings2 },
+  { id: "settings", label: "Programme Configuration", icon: Settings2 },
 ];
 
 export default function AdminPanel() {
@@ -59,6 +69,8 @@ export default function AdminPanel() {
         return <AdminStatus overview={overview} onOpenSettings={() => setTab("settings")} />;
       case "upload":
         return <BharatUpload overview={overview} />;
+      case "allocation":
+        return <UserVillageAllocation />;
       case "targets":
         return <TargetAllocation />;
       case "history":
@@ -75,6 +87,7 @@ export default function AdminPanel() {
                 daily report.
               </p>
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <Row label="Dispensary" value={overview.dispensaryName} />
                 <Row label="District" value={`${overview.districtName}, ${overview.state}`} />
                 <Row label="Vaccination start" value={overview.vaccinationStartDate ?? "Not set"} />
                 <Row
@@ -120,7 +133,7 @@ export default function AdminPanel() {
                 </span>
               </div>
               <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                {overview?.districtName ?? "District"} District · signed in as{" "}
+                {overview?.dispensaryName ?? "Dispensary"} · {overview?.districtName ?? "District"}, {overview?.state ?? ""} · signed in as{" "}
                 {adminName}
               </p>
             </div>

@@ -36,6 +36,7 @@ const schema = defineSchema(
     settings: defineTable({
       key: v.string(),
       districtName: v.string(),
+      dispensaryName: v.optional(v.string()), // e.g. "SVD BOGINADI"
       state: v.string(),
       sheetUrl: v.string(),
       sheetGid: v.optional(v.string()),
@@ -135,7 +136,48 @@ const schema = defineSchema(
       .index("by_dateKey", ["dateKey"])
       .index("by_naturalKey", ["naturalKey"]),
 
-    // ---- Source 1: TARGET PDF (official targets) ----
+    // ---- User & village allocation (Excel/CSV import) ----
+    // One row per (user, village, target) from the ACTIVE allocation file.
+    // This is TARGET data only — never vaccination achievement.
+    allocations: defineTable({
+      uploadId: v.id("allocationUploads"),
+      userName: v.string(),
+      normalizedUser: v.string(),
+      village: v.string(),
+      normalizedVillage: v.string(),
+      target: v.number(),
+      active: v.boolean(),
+    })
+      .index("by_upload", ["uploadId"])
+      .index("by_active", ["active"]),
+
+    // One row per confirmed allocation file import (newest active wins).
+    allocationUploads: defineTable({
+      fileName: v.string(),
+      uploadedAt: v.number(),
+      uploadedBy: v.string(),
+      totalRows: v.number(),
+      validRows: v.number(),
+      invalidRows: v.number(),
+      userCount: v.number(),
+      villageCount: v.number(),
+      totalTarget: v.number(),
+      errors: v.array(
+        v.object({
+          row: v.number(),
+          userName: v.string(),
+          village: v.string(),
+          error: v.string(),
+        }),
+      ),
+      status: v.union(
+        v.literal("active"),
+        v.literal("superseded"),
+        v.literal("failed"),
+      ),
+    }).index("by_status", ["status"]),
+
+    // ---- Source 1: TARGET PDF (legacy, kept for existing data) ----
     targetVersions: defineTable({
       versionNumber: v.number(),
       fileName: v.string(),

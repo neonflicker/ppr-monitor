@@ -1,5 +1,9 @@
 import HistoryChart from "@/components/public/HistoryChart";
 import DailyReport from "@/components/public/DailyReport";
+import ScopeFilter, {
+  type Scope,
+  type ScopeData,
+} from "@/components/public/ScopeFilter";
 import VillageProgress, { StatusBadge } from "@/components/public/VillageProgress";
 import { Mark } from "@/components/Mark";
 import { Button } from "@/components/ui/button";
@@ -32,6 +36,7 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { normalizeVillageClient } from "@/lib/scopeKeys";
 
 const nf = new Intl.NumberFormat("en-IN");
 
@@ -398,9 +403,11 @@ function VaccinatorProgressTable({ todayKey }: { todayKey: string }) {
 export default function PublicDashboard() {
   const todayKey = format(new Date(), "yyyy-MM-dd");
   const overview = useQuery(api.stats.overview, { todayKey });
+  const allocation = useQuery(api.allocations.active, {});
   const refresh = useAction(api.sheetActions.publicRefresh);
   const [refreshing, setRefreshing] = useState(false);
   const autoTried = useRef(false);
+  const [scope, setScope] = useState<Scope>({ user: "ALL", village: "ALL" });
 
   const handleRefresh = async (silent = false) => {
     setRefreshing(true);
@@ -437,13 +444,36 @@ export default function PublicDashboard() {
       <main className="flex min-h-screen flex-col items-center justify-center gap-3">
         <Loader2 className="size-6 animate-spin text-primary" />
         <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          Loading district data
+          Loading programme data
         </p>
       </main>
     );
   }
 
-  return <DashboardView overview={overview} refreshing={refreshing} onRefresh={handleRefresh} todayKey={todayKey} />;
+  // Scope data is derived from the active allocation import (never hardcoded).
+  const scopeData: ScopeData = {
+    available: !!allocation?.upload,
+    users: (allocation?.users ?? []).map((u) => ({
+      key: u.key,
+      name: u.name,
+      target: u.target,
+      villages: u.villages,
+    })),
+    villageNames: allocation?.villageNames ?? {},
+    villageTargets: allocation?.villageTargets ?? {},
+  };
+
+  return (
+    <DashboardView
+      overview={overview}
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      todayKey={todayKey}
+      scope={scope}
+      onScopeChange={setScope}
+      scopeData={scopeData}
+    />
+  );
 }
 
 function DashboardView({
@@ -451,14 +481,53 @@ function DashboardView({
   refreshing,
   onRefresh,
   todayKey,
+  scope,
+  onScopeChange,
+  scopeData,
 }: {
   overview: Overview;
   refreshing: boolean;
   onRefresh: (silent?: boolean) => Promise<void>;
   todayKey: string;
+  scope: Scope;
+  onScopeChange: (next: Scope) => void;
+  scopeData: ScopeData;
 }) {
   const { target, achievement, remaining, completion, excess, today } = overview;
   const hasTarget = target !== null && target > 0;
+
+  /* ---------------- Scope (§13): summary cards honour the filter ---------------- */
+  const scopeUser =
+    scope.user === "ALL" ? null : scopeData.users.find((u) => u.key === scope.user) ?? null;
+
+  /** Allocation target of the current scope (from the allocation file). */
+  const scopeTarget = useMemo(() => {
+    if (scope.village !== "ALL") {
+      return scopeData.villageTargets[scope.village] ?? 0;
+    }
+    if (scopeUser) return scopeUser.target;
+    return null; // ALL USERS → programme-level view
+  }, [scope.village, scopeUser, scopeData.villageTargets]);
+
+  const isScoped = scope.user !== "ALL" || scope.village !== "ALL";
+  const isUserScoped = scope.user !== "ALL";
+
+  /** PENDING → no allocation at all; FULLY when every village with records
+      is covered by the allocation; PARTIALLY otherwise. */
+  const allocationStatus = (() => {
+    const allocatedCount = Math.max(
+      Object.keys(scopeData.villageTargets).length,
+      overview.allocatedVillages,
+    );
+    const allocatedSum = Math.max(
+      overview.villageTargetSum,
+      Object.values(scopeData.villageTargets).reduce((s, n) => s + n, 0),
+    );
+    if (allocatedCount === 0 || allocatedSum === 0) return "PENDING";
+    return overview.villagesCovered <= allocatedCount
+      ? "FULLY ALLOCATED"
+      : "PARTIALLY ALLOCATED";
+  })();
 
   const lastUpdate =
     Math.max(overview.lastSuccess?.finishedAt ?? 0, overview.bharat.lastUploadAt ?? 0) ||
@@ -485,7 +554,9 @@ function DashboardView({
                   <br className="sm:hidden" /> MONITORING
                 </h1>
                 <p className="mt-1 text-[11px] uppercase tracking-[0.24em] text-muted-foreground sm:text-xs">
-                  {overview.districtName} District, {overview.state}
+                  {overview.dispensaryName}
+                  <br />
+                  {overview.districtName}, {overview.state}
                 </p>
               </div>
             </div>
@@ -567,6 +638,9 @@ function DashboardView({
       </nav>
 
       <main className="mx-auto w-full max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
+        {/* ---------------- USER / ALLOTTED VILLAGE scope filter ---------------- */}
+        <ScopeFilter scope={scope} onChange={onScopeChange} data={scopeData} />
+
         {/* ---------------- Sync error banner ---------------- */}
         {syncError && (
           <div className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3">
@@ -592,7 +666,7 @@ function DashboardView({
         <section id="dashboard" className="scroll-mt-28 space-y-5">
           <SectionHead
             title="Current Programme Progress"
-            sub={`${overview.districtName} district · PPR vaccination campaign`}
+            sub={`${overview.dispensaryName} · PPR vaccination campaign`}
           />
 
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
@@ -610,7 +684,7 @@ function DashboardView({
               label="Total Programme Target"
               value={hasTarget ? nf.format(target) : "—"}
               sub={
-                hasTarget ? "District programme target" : "Target data pending admin setup"
+                hasTarget ? "Dispensary programme target" : "Target data pending admin setup"
               }
             />
             <SummaryCard
@@ -639,7 +713,7 @@ function DashboardView({
           <div className="rounded-md border border-border bg-card px-4 py-5 sm:px-6">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="font-title text-lg font-bold uppercase tracking-wide sm:text-xl">
-                District PPR Vaccination Progress
+                Dispensary PPR Vaccination Progress
               </h3>
               {hasTarget && completion !== null && (
                 <p className="font-title text-3xl font-bold text-primary tabular-nums sm:text-4xl">
@@ -700,7 +774,13 @@ function DashboardView({
                   <span className="text-muted-foreground">
                     Village Targets Allocated:{" "}
                     <span className="font-semibold text-foreground tabular-nums">
-                      {overview.allocatedVillages}
+                      {Math.max(
+                        overview.allocatedVillages > 0 ? overview.villageTargetSum : 0,
+                        Object.values(scopeData.villageTargets).reduce(
+                          (s, n) => s + n,
+                          0,
+                        ),
+                      )}
                     </span>
                   </span>
                   <span className="text-muted-foreground">
@@ -708,15 +788,30 @@ function DashboardView({
                     <span
                       className={cn(
                         "font-semibold",
-                        overview.allocatedVillages > 0
-                          ? "text-primary"
-                          : "text-destructive",
+                        allocationStatus === "PENDING"
+                          ? "text-destructive"
+                          : "text-primary",
                       )}
                     >
-                      {overview.allocatedVillages > 0 ? "ACTIVE" : "PENDING"}
+                      {allocationStatus}
                     </span>
                   </span>
                 </div>
+
+                {isScoped && (
+                  <p className="mt-2 rounded border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    Filtered view — {scopeUser?.name ?? "All Users"} ·{" "}
+                    {scope.village === "ALL"
+                      ? "all allotted villages"
+                      : (scopeData.villageNames[scope.village] ?? scope.village)}
+                    {scopeTarget !== null && scopeTarget > 0
+                      ? ` · scope allocation target ${nf.format(scopeTarget)}`
+                      : ""}
+                    {" "}· achievement for this scope is shown as VILLAGE
+                    ACHIEVEMENT in the village table (vaccination records are
+                    attributed by village, never split per user).
+                  </p>
+                )}
               </>
             ) : (
               <div className="mt-3 rounded border border-dashed border-border bg-muted/50 px-4 py-6 text-center">
@@ -802,7 +897,7 @@ function DashboardView({
             title="Village-wise PPR Progress"
             sub="Search, filter and sort every village"
           />
-          <VillageProgress />
+          <VillageProgress scope={scope} scopeData={scopeData} />
         </section>
 
         {/* ---------------- History ---------------- */}
@@ -820,7 +915,7 @@ function DashboardView({
           <SectionHead
             id="reports"
             title="Daily Report"
-            sub="DISTRICT DVTR FORMAT PPR-EP"
+            sub="DISPENSARY DVTR FORMAT PPR-EP"
           />
           <DailyReport overview={overview} />
         </section>
@@ -917,14 +1012,15 @@ function DashboardView({
               About / Data Sources
             </p>
             <p>
-              Target figures come from the administrator-managed village allocation
-              (district target PDF or manual entry). Achievement is counted from
+              Target figures come from the administrator-managed allocation
+              (Excel/CSV user allocation or manual entry). Achievement is counted from
               validated, de-duplicated vaccination records: historical field-sheet
               entries from Google Sheets and detailed uploads from Bharat Pashudhan.
               Records present in both sources are matched on date, village,
               vaccinator and counts so the same animal is never counted twice.
               Rejected rows are stored for inspection but excluded from every figure
-              above.
+              above. PDF export is output only — allocation data arrives via
+              Excel/CSV import.
             </p>
           </div>
         </section>
@@ -934,7 +1030,7 @@ function DashboardView({
             PPR Field Vaccination Monitoring
           </p>
           <p className="mt-0.5">
-            District {overview.districtName}, {overview.state} · Total valid records:{" "}
+            {overview.dispensaryName} · {overview.districtName}, {overview.state} · Total valid records:{" "}
             {nf.format(overview.validRecords)} · Rejected:{" "}
             {nf.format(overview.rejectedRecords)}
           </p>

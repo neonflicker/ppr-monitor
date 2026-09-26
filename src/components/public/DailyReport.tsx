@@ -32,7 +32,7 @@ interface Props {
 }
 
 /**
- * DISTRICT DVTR FORMAT PPR-EP — publicly viewable.
+ * DISPENSARY DVTR FORMAT PPR-EP — publicly viewable.
  * Save / export controls only unlock for a signed-in administrator.
  */
 export default function DailyReport({ overview }: Props) {
@@ -61,7 +61,7 @@ export default function DailyReport({ overview }: Props) {
   const rows: [string, string | number][] = compute
     ? [
         ["Date", prettyDate(dateKey)],
-        ["Name of the District", compute.district],
+        ["Name of the Dispensary", compute.district],
         [
           "Vaccination Start Date",
           compute.vaccinationStartDate
@@ -129,7 +129,7 @@ export default function DailyReport({ overview }: Props) {
       const doc = new jsPDF({ unit: "pt", format: "a4" });
       doc.setFont("helvetica", "bold");
       doc.setFontSize(16);
-      doc.text("DISTRICT DVTR FORMAT PPR-EP", 40, 56);
+      doc.text("DISPENSARY DVTR FORMAT PPR-EP", 40, 56);
       doc.setDrawColor(27, 94, 32);
       doc.line(40, 66, 555, 66);
       doc.setFont("helvetica", "normal");
@@ -150,7 +150,7 @@ export default function DailyReport({ overview }: Props) {
         96 + rows.length * 26 + 16,
       );
       doc.save(
-        `PPR_Daily_Report_${compute?.district ?? "District"}_${dateKey}.pdf`,
+        `PPR_Daily_Report_${compute?.district ?? "Dispensary"}_${dateKey}.pdf`,
       );
       toast.success("PDF downloaded");
     } catch (err) {
@@ -195,10 +195,10 @@ export default function DailyReport({ overview }: Props) {
       <div className="overflow-hidden rounded-md border border-border bg-card">
         <div className="border-b border-border bg-primary px-4 py-3 text-center">
           <p className="font-title text-lg font-bold tracking-wide text-primary-foreground sm:text-xl">
-            DISTRICT DVTR FORMAT PPR-EP
+            DISPENSARY DVTR FORMAT PPR-EP
           </p>
           <p className="text-[10px] uppercase tracking-[0.2em] text-primary-foreground/80">
-            {overview.districtName} District · {overview.state}
+            {overview.dispensaryName} · {overview.districtName}, {overview.state}
           </p>
         </div>
 

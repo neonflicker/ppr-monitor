@@ -12,6 +12,7 @@ export const DEFAULT_SHEET_URL =
 export const DEFAULT_SETTINGS = {
   key: "main" as const,
   districtName: "LAKHIMPUR",
+  dispensaryName: "SVD BOGINADI",
   state: "ASSAM",
   sheetUrl: DEFAULT_SHEET_URL,
   sheetGid: "",
@@ -35,6 +36,8 @@ export const DEFAULT_PERSONNEL = {
 
 export type Settings = {
   districtName: string;
+  /** Operational/programme unit, e.g. "SVD BOGINADI". Falls back to districtName. */
+  dispensaryName: string;
   state: string;
   sheetUrl: string;
   sheetGid?: string;
@@ -56,6 +59,7 @@ export async function readSettingsDoc(ctx: QueryCtx): Promise<Settings> {
   if (!doc) {
     return {
       districtName: DEFAULT_SETTINGS.districtName,
+      dispensaryName: DEFAULT_SETTINGS.dispensaryName,
       state: DEFAULT_SETTINGS.state,
       sheetUrl: DEFAULT_SETTINGS.sheetUrl,
       sheetGid: DEFAULT_SETTINGS.sheetGid,
@@ -68,6 +72,9 @@ export async function readSettingsDoc(ctx: QueryCtx): Promise<Settings> {
   }
   return {
     districtName: doc.districtName,
+    // Docs created before the dispensary field existed fall back to the
+    // centrally configured default (SVD BOGINADI).
+    dispensaryName: doc.dispensaryName ?? DEFAULT_SETTINGS.dispensaryName,
     state: doc.state,
     sheetUrl: doc.sheetUrl,
     sheetGid: doc.sheetGid,
@@ -114,6 +121,7 @@ export const ensure = internalMutation({
 
 const patchArgs = {
   districtName: v.optional(v.string()),
+  dispensaryName: v.optional(v.string()),
   state: v.optional(v.string()),
   sheetUrl: v.optional(v.string()),
   sheetGid: v.optional(v.string()),
@@ -131,6 +139,9 @@ function buildPatch(args: Partial<Record<keyof typeof patchArgs, unknown>>) {
   if (args.districtName !== undefined)
     patch.districtName =
       (args.districtName as string).trim() || DEFAULT_SETTINGS.districtName;
+  if (args.dispensaryName !== undefined)
+    patch.dispensaryName =
+      (args.dispensaryName as string).trim() || DEFAULT_SETTINGS.dispensaryName;
   if (args.state !== undefined)
     patch.state = (args.state as string).trim() || DEFAULT_SETTINGS.state;
   if (args.sheetUrl !== undefined)
@@ -196,6 +207,9 @@ export const apply = internalMutation({
       districtName:
         (patch.districtName as string | undefined) ??
         DEFAULT_SETTINGS.districtName,
+      dispensaryName:
+        (patch.dispensaryName as string | undefined) ??
+        DEFAULT_SETTINGS.dispensaryName,
       state: (patch.state as string | undefined) ?? DEFAULT_SETTINGS.state,
       sheetUrl:
         (patch.sheetUrl as string | undefined) ?? DEFAULT_SETTINGS.sheetUrl,

@@ -7,6 +7,7 @@ import {
   aggregateByDay,
   type AggregateRecord,
 } from "./lib/dayAggregate";
+import { allocationSummary, type AllocationSummary } from "./allocationSummary";
 
 /** Status buckets derived from completion % (never entered manually). */
 export function statusFor(completion: number | null): string {
@@ -175,6 +176,7 @@ export const overview = query({
 
     return {
       districtName: settings.districtName,
+      dispensaryName: settings.dispensaryName,
       state: settings.state,
       vaccinationStartDate: settings.vaccinationStartDate ?? null,
       sheetUrl: settings.sheetUrl,
@@ -204,6 +206,8 @@ export const overview = query({
       // Allocation status: how many villages actually carry an active target
       // record (even a deliberate zero), and the sum of those allocations.
       allocatedVillages: byVillage.size,
+      // Excel/CSV user allocation (USER → VILLAGE → TARGET).
+      allocation: await allocationSummary(ctx),
       goatTarget: goatTargetSum > 0 ? goatTargetSum : null,
       sheepTarget: sheepTargetSum > 0 ? sheepTargetSum : null,
 

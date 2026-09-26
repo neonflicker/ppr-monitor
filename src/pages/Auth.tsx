@@ -98,7 +98,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
               PPR Field Vaccination Monitoring
             </p>
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              District · Lakhimpur, Assam
+              SVD Boginadi · Lakhimpur, Assam
             </p>
           </div>
         </div>

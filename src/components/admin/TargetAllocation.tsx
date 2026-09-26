@@ -7,17 +7,8 @@ import { errorMessage } from "@/lib/convex-errors";
 import type { AuditRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAction, useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
 import { format } from "date-fns";
-import {
-  FileUp,
-  History,
-  Loader2,
-  Plus,
-  Save,
-  Trash2,
-  X,
-} from "lucide-react";
+import { History, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -31,10 +22,6 @@ type EditRow = {
   active: boolean;
   remarks: string;
 };
-
-type ParsedPreview = FunctionReturnType<
-  typeof api.targetActions.previewTargetPdf
->;
 
 type AllocationResult = {
   versionId: string;
@@ -69,18 +56,17 @@ function parseAuditDetails(row: AuditRow): AllocationResult["changes"] | null {
   }
 }
 
+/**
+ * Manual village target editor. (The PDF target reader was removed —
+ * allocation now arrives via the Excel/CSV User & Village Allocation import.)
+ */
 export default function TargetAllocation() {
   const { token, expireSession } = useAdmin();
 
   const data = useQuery(api.targets.activeRecords, {});
   const audit = useQuery(api.targets.auditTrail, { limit: 20 });
-
   const saveAllocation = useAction(api.targetActions.saveManualAllocation);
-  const previewPdf = useAction(api.targetActions.previewTargetPdf);
-  const confirmPdf = useAction(api.targetActions.confirmTargetUpload);
-  const discardPdf = useAction(api.targetActions.discardTargetPdf);
 
-  /* ---- manual editor state ---- */
   const [district, setDistrict] = useState("");
   const [allocDate, setAllocDate] = useState("");
   const [remarks, setRemarks] = useState("");
@@ -88,11 +74,6 @@ export default function TargetAllocation() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<AllocationResult | null>(null);
   const loadedVersion = useRef<string | null>(null);
-
-  /* ---- pdf upload state ---- */
-  const [pdfBusy, setPdfBusy] = useState(false);
-  const [pdfPreview, setPdfPreview] = useState<ParsedPreview | null>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!data?.version) return;
@@ -113,32 +94,22 @@ export default function TargetAllocation() {
     );
   }, [data]);
 
-  const requireToken = (): string | null => {
-    if (!token) {
-      expireSession();
-      toast.error("Session expired", { description: "Please sign in again." });
-      return null;
-    }
-    return token;
-  };
-
   const num = (value: string) => {
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
   };
-
   const total = (row: EditRow) => num(row.goat) + num(row.sheep);
-  const editorSum = rows.reduce(
-    (s, r) => (r.active ? s + total(r) : s),
-    0,
-  );
+  const editorSum = rows.reduce((s, r) => (r.active ? s + total(r) : s), 0);
 
   const updateRow = (index: number, patch: Partial<EditRow>) =>
     setRows((list) => list.map((r, i) => (i === index ? { ...r, ...patch } : r)));
 
   const handleSave = async () => {
-    const t = requireToken();
-    if (!t) return;
+    if (!token) {
+      expireSession();
+      toast.error("Session expired", { description: "Please sign in again." });
+      return;
+    }
     const villages = rows
       .filter((r) => r.village.trim())
       .map((r) => ({
@@ -150,14 +121,14 @@ export default function TargetAllocation() {
       }));
     if (villages.length === 0 && !district.trim()) {
       toast.error("Nothing to save", {
-        description: "Add at least one village or a district target.",
+        description: "Add at least one village or a dispensary target.",
       });
       return;
     }
     setSaving(true);
     try {
       const res = (await saveAllocation({
-        token: t,
+        token,
         districtTarget: district.trim() ? Number(district) : undefined,
         clearDistrictTarget: !district.trim(),
         allocationDate: allocDate || undefined,
@@ -178,127 +149,38 @@ export default function TargetAllocation() {
     }
   };
 
-  /* ---- PDF upload ---- */
-  const handlePdf = async (file: File | undefined) => {
-    if (!file) return;
-    const t = requireToken();
-    if (!t) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      toast.error("Only PDF files are supported for target uploads.");
-      return;
-    }
-    setPdfBusy(true);
-    setPdfPreview(null);
-    try {
-      const buf = await file.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let binary = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      }
-      const preview = (await previewPdf({
-        token: t,
-        fileName: file.name,
-        pdfBase64: btoa(binary),
-      })) as ParsedPreview;
-      setPdfPreview(preview);
-      toast.success("Target PDF parsed", {
-        description: `${nf.format(preview.rows.length)} village rows · ${
-          preview.overallTarget != null
-            ? `overall target ${nf.format(preview.overallTarget)}`
-            : "no overall target found"
-        }`,
-      });
-    } catch (err) {
-      toast.error("Could not read this PDF", { description: errorMessage(err) });
-    } finally {
-      setPdfBusy(false);
-      if (pdfInputRef.current) pdfInputRef.current.value = "";
-    }
-  };
-
-  const handleConfirmPdf = async (activate: boolean) => {
-    const t = requireToken();
-    if (!t || !pdfPreview) return;
-    setPdfBusy(true);
-    try {
-      const res = (await confirmPdf({
-        token: t,
-        fileName: pdfPreview.fileName,
-        storageId: pdfPreview.storageId,
-        overallTarget: pdfPreview.overallTarget ?? undefined,
-        overallSource: pdfPreview.overallSource ?? undefined,
-        goatTarget: pdfPreview.goatTarget ?? undefined,
-        sheepTarget: pdfPreview.sheepTarget ?? undefined,
-        pages: pdfPreview.pages,
-        confidence: pdfPreview.confidence,
-        warnings: pdfPreview.warnings,
-        extraction: pdfPreview.extraction,
-        activate,
-        correctedRecords: 0,
-        records: pdfPreview.rows,
-      })) as { versionId: string; versionNumber: number };
-      setPdfPreview(null);
-      loadedVersion.current = null; // re-seed the editor from the new version
-      toast.success(
-        activate
-          ? `Target version ${res.versionNumber} activated`
-          : `Target version ${res.versionNumber} saved as draft`,
-      );
-    } catch (err) {
-      toast.error("Could not save the target file", {
-        description: errorMessage(err),
-      });
-    } finally {
-      setPdfBusy(false);
-    }
-  };
-
-  const handleCancelPdf = async () => {
-    const t = requireToken();
-    if (!t || !pdfPreview) return;
-    try {
-      await discardPdf({ token: t, storageId: pdfPreview.storageId });
-    } catch {
-      // Best effort — the preview is dropped locally either way.
-    }
-    setPdfPreview(null);
-  };
-
   const version = data?.version ?? null;
 
   return (
     <div className="space-y-6">
-      {/* ============ Manual allocation ============ */}
       <Card className="border-border">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="font-title text-lg tracking-tight">
-              Village Target Allocation
+              Manual Village Targets
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              The authoritative TARGET source for the public dashboard. Every change
-              is recorded with who changed it and when.
+              Optional hand-entered village targets. The primary allocation source
+              is the User &amp; Village Allocation import.
             </p>
           </div>
           {version && (
             <div className="text-right text-xs text-muted-foreground">
               <p className="font-semibold text-foreground">
-                Version {version.versionNumber} · {version.source === "manual" ? "manual" : "PDF"}
+                Version {version.versionNumber} ·{" "}
+                {version.source === "manual" ? "manual" : "file"}
               </p>
               <p>
-                {version.villageCount} active villages · uploaded{" "}
+                {version.villageCount} active villages · updated{" "}
                 {format(version.uploadedAt, "d MMM yyyy, hh:mm a")}
               </p>
             </div>
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* District-level inputs */}
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="space-y-1 text-xs text-muted-foreground">
-              District Target
+              Dispensary Target
               <Input
                 type="number"
                 min={0}
@@ -328,7 +210,6 @@ export default function TargetAllocation() {
             </label>
           </div>
 
-          {/* Village rows */}
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-muted/80">
@@ -346,7 +227,7 @@ export default function TargetAllocation() {
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
-                      No villages yet — add the first village or upload a target PDF.
+                      No manual village targets yet.
                     </td>
                   </tr>
                 )}
@@ -442,7 +323,7 @@ export default function TargetAllocation() {
                   </td>
                   <td colSpan={3} className="py-2 pr-3 text-xs font-normal text-muted-foreground">
                     {district.trim() &&
-                      `District target: ${nf.format(Number(district) || 0)}`}
+                      `Dispensary target: ${nf.format(Number(district) || 0)}`}
                   </td>
                 </tr>
               </tfoot>
@@ -469,7 +350,7 @@ export default function TargetAllocation() {
               ) : (
                 <Save className="size-4" />
               )}
-              Save allocation
+              Save targets
             </Button>
             <span className="text-xs text-muted-foreground">
               Rows you delete are deactivated, never erased — history is preserved.
@@ -489,11 +370,6 @@ export default function TargetAllocation() {
                     {change.from !== undefined &&
                       change.from !== change.to &&
                       `: ${nf.format(change.from)} → ${nf.format(change.to)}`}
-                    {change.from === undefined || change.from === change.to
-                      ? change.kind === "changed"
-                        ? ""
-                        : `: ${nf.format(change.to)}`
-                      : ""}
                   </li>
                 ))}
               </ul>
@@ -502,92 +378,7 @@ export default function TargetAllocation() {
         </CardContent>
       </Card>
 
-      {/* ============ Target PDF upload ============ */}
-      <Card className="border-border">
-        <CardHeader className="space-y-0 pb-3">
-          <CardTitle className="font-title text-lg tracking-tight">
-            Target PDF
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Optional: upload the official district target PDF. Columns and villages
-            are detected, previewed and only stored after you confirm.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <input
-            ref={pdfInputRef}
-            type="file"
-            accept=".pdf"
-            className="hidden"
-            onChange={(e) => void handlePdf(e.target.files?.[0])}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => pdfInputRef.current?.click()}
-              disabled={pdfBusy}
-            >
-              {pdfBusy ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <FileUp className="size-4" />
-              )}
-              Upload target PDF
-            </Button>
-          </div>
-
-          {pdfPreview && (
-            <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm">
-              <p className="font-semibold">{pdfPreview.fileName}</p>
-              <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
-                <Field label="Village rows" value={nf.format(pdfPreview.rows.length)} />
-                <Field
-                  label="Overall target"
-                  value={
-                    pdfPreview.overallTarget != null
-                      ? nf.format(pdfPreview.overallTarget)
-                      : "—"
-                  }
-                />
-                <Field label="Goat target" value={pdfPreview.goatTarget != null ? nf.format(pdfPreview.goatTarget) : "—"} />
-                <Field label="Sheep target" value={pdfPreview.sheepTarget != null ? nf.format(pdfPreview.sheepTarget) : "—"} />
-                <Field label="Pages" value={String(pdfPreview.pages)} />
-                <Field label="Confidence" value={`${Math.round(pdfPreview.confidence * 100)}%`} />
-                <Field label="Extraction" value={pdfPreview.extraction} />
-                <Field label="District" value={pdfPreview.district ?? "—"} />
-              </div>
-              {pdfPreview.warnings.length > 0 && (
-                <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-                  {pdfPreview.warnings.slice(0, 6).map((w) => (
-                    <li key={w}>• {w}</li>
-                  ))}
-                </ul>
-              )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => void handleConfirmPdf(true)} disabled={pdfBusy}>
-                  {pdfBusy ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                  Save & activate
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleConfirmPdf(false)}
-                  disabled={pdfBusy}
-                >
-                  Save as draft
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => void handleCancelPdf()} disabled={pdfBusy}>
-                  <X className="size-4" />
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ============ Change history ============ */}
+      {/* ---- Change history ---- */}
       <Card className="border-border">
         <CardHeader className="space-y-0 pb-3">
           <div className="flex items-center gap-3">
@@ -627,7 +418,10 @@ export default function TargetAllocation() {
                     {changes && changes.length > 0 && (
                       <ul className="mt-1.5 space-y-0.5 border-l-2 border-border pl-3">
                         {changes.slice(0, 8).map((change, i) => (
-                          <li key={`${row._id}-${i}`} className="text-xs text-muted-foreground">
+                          <li
+                            key={`${row._id}-${i}`}
+                            className="text-xs text-muted-foreground"
+                          >
                             {change.village}:{" "}
                             {change.from !== undefined
                               ? `${nf.format(change.from)} → ${nf.format(change.to)}`
@@ -649,15 +443,6 @@ export default function TargetAllocation() {
           )}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-semibold tabular-nums">{value}</span>
     </div>
   );
 }

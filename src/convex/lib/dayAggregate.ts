@@ -4,9 +4,9 @@ import { normalizeName } from "./villageMatch";
  * ONE normalised vaccination aggregation layer.
  *
  * Every per-date figure on the dashboard, the daily progress section, the
- * historical chart, the vaccinator tables and the DISTRICT DVTR report (view,
- * Excel, PDF) is produced here — nowhere else. Adding a field here makes it
- * available everywhere at once.
+ * historical chart, the vaccinator tables and the DISPENSARY DVTR report
+ * (view, Excel, PDF) is produced here — nowhere else. Adding a field here
+ * makes it available everywhere at once.
  */
 
 export type PersonnelBucket = "departmental" | "semi" | "private";

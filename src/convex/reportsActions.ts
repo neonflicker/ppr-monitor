@@ -82,7 +82,7 @@ export const saveDailyReport = action({
   },
 });
 
-/** Generate the styled DISTRICT DVTR FORMAT PPR-EP Excel file. */
+/** Generate the styled DISPENSARY DVTR FORMAT PPR-EP Excel file. */
 export const generateReportExcel = action({
   args: {
     token: v.string(),
@@ -118,25 +118,25 @@ export const generateReportExcel = action({
     // ---- Title ----
     sheet.mergeCells("A1:B1");
     const title = sheet.getCell("A1");
-    title.value = "DISTRICT DVTR FORMAT PPR-EP";
+    title.value = "DISPENSARY DVTR FORMAT PPR-EP";
     title.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
     title.alignment = { horizontal: "center", vertical: "middle" };
     title.fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FF1B5E20" },
+      fgColor: { argb: "FF1F4E79" },
     };
     title.border = {
-      top: { style: "medium", color: { argb: "FF1B5E20" } },
-      left: { style: "medium", color: { argb: "FF1B5E20" } },
-      bottom: { style: "medium", color: { argb: "FF1B5E20" } },
-      right: { style: "medium", color: { argb: "FF1B5E20" } },
+      top: { style: "medium", color: { argb: "FF1F4E79" } },
+      left: { style: "medium", color: { argb: "FF1F4E79" } },
+      bottom: { style: "medium", color: { argb: "FF1F4E79" } },
+      right: { style: "medium", color: { argb: "FF1F4E79" } },
     };
     sheet.getRow(1).height = 30;
 
     const rows: [string, string | number][] = [
       ["Date", formatDate(args.reportDate)],
-      ["Name of the District", computed.district],
+      ["Name of the Dispensary", computed.district],
       [
         "Vaccination Start Date",
         computed.vaccinationStartDate
@@ -164,7 +164,7 @@ export const generateReportExcel = action({
       labelCell.fill = {
         type: "pattern",
         pattern: "solid",
-        fgColor: { argb: index % 2 === 0 ? "FFF2F7F2" : "FFFFFFFF" },
+        fgColor: { argb: index % 2 === 0 ? "FFF2F6FA" : "FFFFFFFF" },
       };
       valueCell.alignment = { horizontal: "center" };
       valueCell.font = { size: 12 };

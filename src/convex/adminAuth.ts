@@ -234,6 +234,7 @@ export const updateSettings = action({
   args: {
     token: v.string(),
     districtName: v.optional(v.string()),
+    dispensaryName: v.optional(v.string()),
     state: v.optional(v.string()),
     sheetUrl: v.optional(v.string()),
     sheetGid: v.optional(v.string()),

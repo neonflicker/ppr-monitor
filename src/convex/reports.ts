@@ -30,9 +30,10 @@ function classifyDesignation(
 }
 
 /**
- * DISTRICT DVTR FORMAT PPR-EP values for one date, computed from vaccination
- * records (Google Sheet + Bharat Pashudhan). Wastage is NOT invented — only
- * the sum present in source data is returned as a suggestion.
+ * DISPENSARY DVTR FORMAT PPR-EP values for one date, computed from vaccination
+ * records (Google Sheet + Bharat Pashudhan) through the shared dayAggregate
+ * engine. Wastage is NOT invented — only the sum present in source data is
+ * returned as a suggestion.
  */
 export const compute = query({
   args: { dateKey: v.string() },
@@ -89,7 +90,7 @@ export const compute = query({
 
     return {
       dateKey,
-      district: settings.districtName,
+      district: settings.dispensaryName,
       vaccinationStartDate: settings.vaccinationStartDate ?? null,
       defaultWasted: settings.defaultWasted ?? 0,
       animalsTotal: agg.animalsTotal,

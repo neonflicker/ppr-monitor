@@ -2,7 +2,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { format } from "date-fns";
-import { FileSpreadsheet, History, Table2, Target } from "lucide-react";
+import {
+  ClipboardList,
+  FileSpreadsheet,
+  History,
+  Table2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 
 const nf = new Intl.NumberFormat("en-IN");
@@ -16,9 +22,91 @@ export default function ImportHistory() {
   const syncs = useQuery(api.sync.history, { limit: 25 });
   const versions = useQuery(api.targets.listVersions, {});
   const reports = useQuery(api.reports.history, { limit: 15 });
+  const allocationUploads = useQuery(api.allocations.history, {});
 
   return (
     <div className="space-y-6">
+      {/* ---- User & Village allocation imports ---- */}
+      <HistoryCard
+        title="User & Village Allocation Imports"
+        icon={<ClipboardList className="size-4 text-primary" />}
+        subtitle="Allocation files — the newest ACTIVE dataset drives the target views"
+        empty={allocationUploads && allocationUploads.length === 0}
+        emptyText="No allocation files imported yet."
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[780px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="py-2 pr-3 font-medium">Filename</th>
+                <th className="py-2 pr-3 font-medium">Uploaded At</th>
+                <th className="py-2 pr-3 font-medium">By</th>
+                <th className="py-2 pr-3 text-right font-medium">Rows</th>
+                <th className="py-2 pr-3 text-right font-medium">Users</th>
+                <th className="py-2 pr-3 text-right font-medium">Villages</th>
+                <th className="py-2 pr-3 text-right font-medium">Total Target</th>
+                <th className="py-2 pr-3 text-right font-medium">Valid</th>
+                <th className="py-2 pr-3 text-right font-medium">Invalid</th>
+                <th className="py-2 pr-3 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(allocationUploads ?? []).map((row) => (
+                <tr
+                  key={row._id}
+                  className={cn(
+                    "border-b border-border/60 last:border-0",
+                    row.status === "active" && "bg-primary/5",
+                  )}
+                >
+                  <td className="max-w-[200px] truncate py-2 pr-3 font-medium">
+                    {row.fileName}
+                  </td>
+                  <td className="py-2 pr-3 whitespace-nowrap tabular-nums text-muted-foreground">
+                    {stamp(row.uploadedAt)}
+                  </td>
+                  <td className="py-2 pr-3 text-muted-foreground">{row.uploadedBy}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">
+                    {nf.format(row.totalRows)}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums">
+                    {nf.format(row.userCount)}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums">
+                    {nf.format(row.villageCount)}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums">
+                    {nf.format(row.totalTarget)}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-primary">
+                    {nf.format(row.validRows)}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-destructive">
+                    {nf.format(row.invalidRows)}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5 text-xs",
+                        row.status === "active"
+                          ? "border-primary/40 bg-primary/10 text-primary"
+                          : "border-border bg-muted text-muted-foreground",
+                      )}
+                    >
+                      {row.status === "active"
+                        ? "Imported (active)"
+                        : row.status === "superseded"
+                          ? "Superseded"
+                          : "Failed"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </HistoryCard>
+
       {/* ---- Bharat Pashudhan uploads ---- */}
       <HistoryCard
         title="Bharat Pashudhan Uploads"
@@ -155,11 +243,11 @@ export default function ImportHistory() {
         </div>
       </HistoryCard>
 
-      {/* ---- Target versions ---- */}
+      {/* ---- Manual target versions ---- */}
       <HistoryCard
-        title="Target Versions"
-        icon={<Target className="size-4 text-primary" />}
-        subtitle="Every saved allocation or uploaded target PDF"
+        title="Manual Target Versions"
+        icon={<Table2 className="size-4 text-primary" />}
+        subtitle="Every hand-entered target allocation"
         empty={versions && versions.length === 0}
         emptyText="No target versions yet."
       >
@@ -220,7 +308,7 @@ export default function ImportHistory() {
       <HistoryCard
         title="Saved Daily Reports"
         icon={<History className="size-4 text-primary" />}
-        subtitle="DISTRICT DVTR FORMAT PPR-EP records"
+        subtitle="DISPENSARY DVTR FORMAT PPR-EP records"
         empty={reports && reports.length === 0}
         emptyText="No daily reports saved yet."
       >
