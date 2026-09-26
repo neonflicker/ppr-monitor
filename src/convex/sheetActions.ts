@@ -9,6 +9,7 @@ import { naturalKeyOf } from "./lib/villageMatch";
 
 const SESSION_EXPIRED = "SESSION_EXPIRED:";
 const AUTO_SYNC_MIN_MS = 5 * 60 * 1000;
+const PUBLIC_SYNC_COOLDOWN_MS = 15 * 60 * 1000;
 const BATCH_SIZE = 100;
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_SHEET_BYTES = 25 * 1024 * 1024;
@@ -145,7 +146,6 @@ export const syncNow = action({
   ): Promise<SyncSummary> => {
     const admin = await requireAdmin(ctx, token);
     const mode = triggeredBy ?? "manual";
-
     if (mode === "auto") {
       const last = await ctx.runQuery(api.sync.latest, {});
       if (
@@ -157,7 +157,52 @@ export const syncNow = action({
         return { skipped: true as const };
       }
     }
+    return await performSync(ctx, mode, admin.username);
+  },
+});
 
+/**
+ * PUBLIC refresh: keeps the dashboard current without a login, but is
+ * rate-limited server-side (only runs when the last sync is stale) so
+ * anonymous visitors cannot hammer Google Sheets.
+ */
+export const publicRefresh = action({
+  args: {},
+  handler: async (ctx): Promise<SyncSummary> => {
+    const latest = await ctx.runQuery(api.sync.latest, {});
+    const now = Date.now();
+    if (latest) {
+      if (
+        latest.status === "running" &&
+        now - latest.startedAt < AUTO_SYNC_MIN_MS
+      ) {
+        return { skipped: true as const };
+      }
+      if (
+        latest.status === "done" &&
+        latest.finishedAt &&
+        now - latest.finishedAt < PUBLIC_SYNC_COOLDOWN_MS
+      ) {
+        return { skipped: true as const };
+      }
+      if (
+        latest.status === "error" &&
+        latest.finishedAt &&
+        now - latest.finishedAt < 2 * 60 * 1000
+      ) {
+        return { skipped: true as const };
+      }
+    }
+    return await performSync(ctx, "auto", "public");
+  },
+});
+
+/** Core sync routine shared by the admin action and the public refresh. */
+async function performSync(
+  ctx: ActionCtx,
+  mode: "manual" | "auto",
+  by: string,
+): Promise<SyncSummary> {
     const settings = await ctx.runQuery(internal.settings.getRaw, {});
     const syncId = await ctx.runMutation(internal.sync.beginSync, {
       sheetUrl: settings.sheetUrl,
@@ -307,7 +352,7 @@ export const syncNow = action({
       return {
         ok: true as const,
         triggeredBy: mode,
-        triggeredByUser: admin.username,
+        triggeredByUser: by,
         durationMs: Date.now() - startedAt,
         recordsRetrieved: parsed.totalRows,
         validRecords: counters.validProcessed,
@@ -331,5 +376,4 @@ export const syncNow = action({
       });
       throw new ConvexError(message);
     }
-  },
-});
+}

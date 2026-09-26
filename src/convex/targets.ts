@@ -47,6 +47,7 @@ export async function villageTargetTotals(
     }
   >();
   for (const record of records) {
+    if (record.active === false) continue;
     const key = normalizeVillage(record.village);
     if (!key) continue;
     const entry = byVillage.get(key) ?? {
@@ -495,5 +496,222 @@ export const deleteMappingInternal = internalMutation({
   args: { id: v.id("villageMappings") },
   handler: async (ctx, { id }) => {
     await ctx.db.delete(id);
+  },
+});
+
+/**
+ * Save the administrator's village target allocation (the authoritative
+ * TARGET source). Never overwrites history: changed rows are patched with an
+ * audit entry (previous → new, by, when) and rows dropped from the payload
+ * are deactivated rather than deleted.
+ */
+export const saveManualAllocation = internalMutation({
+  args: {
+    by: v.string(),
+    districtTarget: v.optional(v.number()),
+    clearDistrictTarget: v.optional(v.boolean()),
+    allocationDate: v.optional(v.string()),
+    remarks: v.optional(v.string()),
+    villages: v.array(
+      v.object({
+        village: v.string(),
+        goatTarget: v.number(),
+        sheepTarget: v.number(),
+        active: v.optional(v.boolean()),
+        remarks: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    let version = await getActiveVersion(ctx);
+    let districtTarget: number | null = null;
+    const changes: {
+      village: string;
+      kind: "new" | "changed" | "deactivated" | "reactivated";
+      from?: number;
+      to: number;
+    }[] = [];
+
+    if (!version) {
+      const all = await ctx.db.query("targetVersions").collect();
+      const versionNumber =
+        all.reduce((max, v) => Math.max(max, v.versionNumber), 0) + 1;
+      const createdTarget =
+        args.clearDistrictTarget || args.districtTarget === undefined
+          ? undefined
+          : Math.max(0, Math.round(args.districtTarget));
+      const versionId = await ctx.db.insert("targetVersions", {
+        versionNumber,
+        fileName: "Manual allocation",
+        uploadedAt: now,
+        uploadedBy: args.by,
+        overallTarget: createdTarget,
+        villageCount: 0,
+        recordCount: 0,
+        extraction: "manual",
+        source: "manual",
+        status: "active",
+        activatedAt: now,
+      });
+      version = (await ctx.db.get(versionId))!;
+      districtTarget = createdTarget ?? null;
+    } else if (args.clearDistrictTarget) {
+      await ctx.db.patch(version._id, {
+        overallTarget: undefined,
+        source: "manual",
+      });
+      districtTarget = null;
+    } else if (args.districtTarget !== undefined) {
+      districtTarget = Math.max(0, Math.round(args.districtTarget));
+      await ctx.db.patch(version._id, {
+        overallTarget: districtTarget,
+        source: "manual",
+      });
+    } else {
+      districtTarget = version.overallTarget ?? null;
+    }
+
+    const existing = await ctx.db
+      .query("targetRecords")
+      .withIndex("by_version", (q) => q.eq("versionId", version._id))
+      .collect();
+    const byVillage = new Map<string, (typeof existing)[number]>();
+    for (const record of existing) {
+      byVillage.set(normalizeVillage(record.village), record);
+    }
+
+    const incomingKeys = new Set<string>();
+    for (const row of args.villages) {
+      const name = row.village.trim();
+      if (!name) continue;
+      const key = normalizeVillage(name);
+      if (!key || incomingKeys.has(key)) continue;
+      incomingKeys.add(key);
+      const goat = Math.max(0, Math.round(row.goatTarget || 0));
+      const sheep = Math.max(0, Math.round(row.sheepTarget || 0));
+      const total = goat + sheep;
+      const active = row.active !== false;
+      const current = byVillage.get(key);
+
+      if (!current) {
+        await ctx.db.insert("targetRecords", {
+          versionId: version._id,
+          village: name,
+          normalizedVillage: key,
+          goatTarget: goat,
+          sheepTarget: sheep,
+          totalTarget: total,
+          manuallyCorrected: true,
+          active,
+          remarks: row.remarks?.trim() || undefined,
+          allocationDate: args.allocationDate || undefined,
+          updatedAt: now,
+          updatedBy: args.by,
+        });
+        if (active) {
+          changes.push({ village: name, kind: "new", to: total });
+        }
+        continue;
+      }
+
+      const wasActive = current.active !== false;
+      const changed =
+        current.goatTarget !== goat ||
+        current.sheepTarget !== sheep ||
+        current.totalTarget !== total ||
+        wasActive !== active ||
+        (row.remarks?.trim() || undefined) !== current.remarks;
+      if (changed) {
+        await ctx.db.patch(current._id, {
+          village: name,
+          goatTarget: goat,
+          sheepTarget: sheep,
+          totalTarget: total,
+          manuallyCorrected: true,
+          active,
+          remarks: row.remarks?.trim() || undefined,
+          allocationDate: args.allocationDate || current.allocationDate,
+          updatedAt: now,
+          updatedBy: args.by,
+        });
+        if (wasActive && !active) {
+          changes.push({
+            village: name,
+            kind: "deactivated",
+            from: current.totalTarget,
+            to: total,
+          });
+        } else if (!wasActive && active) {
+          changes.push({
+            village: name,
+            kind: "reactivated",
+            from: current.totalTarget,
+            to: total,
+          });
+        } else if (current.totalTarget !== total) {
+          changes.push({
+            village: name,
+            kind: "changed",
+            from: current.totalTarget,
+            to: total,
+          });
+        }
+      }
+    }
+
+    // Rows no longer present in the payload are deactivated, never deleted.
+    for (const [key, record] of byVillage) {
+      if (incomingKeys.has(key)) continue;
+      if (record.active === false) continue;
+      await ctx.db.patch(record._id, {
+        active: false,
+        updatedAt: now,
+        updatedBy: args.by,
+      });
+      changes.push({
+        village: record.village,
+        kind: "deactivated",
+        from: record.totalTarget,
+        to: record.totalTarget,
+      });
+    }
+
+    const activeRows = await ctx.db
+      .query("targetRecords")
+      .withIndex("by_version", (q) => q.eq("versionId", version._id))
+      .collect();
+    const activeCount = activeRows.filter((r) => r.active !== false).length;
+    const villageSum = activeRows
+      .filter((r) => r.active !== false)
+      .reduce((s, r) => s + r.totalTarget, 0);
+    await ctx.db.patch(version._id, {
+      villageCount: activeCount,
+      recordCount: activeRows.length,
+    });
+
+    if (changes.length > 0) {
+      const fresh = await ctx.db.get(version._id);
+      await ctx.db.insert("auditLog", {
+        action: "target.allocation",
+        summary: `Allocation saved by ${args.by}: ${changes.length} change(s), district target ${fresh?.overallTarget ?? "—"}, village sum ${villageSum}`,
+        details: JSON.stringify({
+          changes: changes.slice(0, 300),
+          allocationDate: args.allocationDate ?? null,
+          remarks: args.remarks ?? null,
+        }),
+        at: now,
+        by: args.by,
+      });
+    }
+
+    return {
+      versionId: version._id,
+      versionNumber: version.versionNumber,
+      changeCount: changes.length,
+      changes: changes.slice(0, 300),
+      villageSum,
+      districtTarget,
+    };
   },
 });

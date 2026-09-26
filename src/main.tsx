@@ -11,9 +11,9 @@ import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
 // Lazy load route components for better code splitting
-const Landing = lazy(() => import("./pages/Landing.tsx"));
+const PublicDashboard = lazy(() => import("./pages/PublicDashboard.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
-const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
+const AdminPanel = lazy(() => import("./pages/AdminPanel.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -121,16 +121,18 @@ createRoot(document.getElementById("root")!).render(
           <AdminProvider>
             <Suspense fallback={<RouteLoading />}>
               <Routes>
-                <Route path="/" element={<Landing />} />
+                {/* Public monitoring dashboard — no login required. */}
+                <Route path="/" element={<PublicDashboard />} />
+                {/* Admin login → data management only. */}
                 <Route
                   path="/auth"
-                  element={<AuthPage redirectAfterAuth="/dashboard" />}
+                  element={<AuthPage redirectAfterAuth="/admin" />}
                 />
                 <Route
-                  path="/dashboard"
+                  path="/admin"
                   element={
                     <RequireAdmin>
-                      <Dashboard />
+                      <AdminPanel />
                     </RequireAdmin>
                   }
                 />

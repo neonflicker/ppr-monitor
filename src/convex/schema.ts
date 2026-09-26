@@ -157,6 +157,10 @@ const schema = defineSchema(
         v.literal("tables"),
         v.literal("text"),
         v.literal("no_text"),
+        v.literal("manual"),
+      ),
+      source: v.optional(
+        v.union(v.literal("pdf"), v.literal("manual")),
       ),
       status: v.union(
         v.literal("draft"),
@@ -183,6 +187,11 @@ const schema = defineSchema(
       confidence: v.optional(v.number()),
       manuallyCorrected: v.boolean(),
       normalizedVillage: v.string(),
+      active: v.optional(v.boolean()),
+      remarks: v.optional(v.string()),
+      allocationDate: v.optional(v.string()),
+      updatedAt: v.optional(v.number()),
+      updatedBy: v.optional(v.string()),
     })
       .index("by_version", ["versionId"])
       .index("by_village", ["normalizedVillage"]),

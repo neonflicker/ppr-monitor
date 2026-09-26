@@ -2,11 +2,11 @@
 
 import { ConvexError, v } from "convex/values";
 import { createHash } from "node:crypto";
-import { PDFParse } from "pdf-parse";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action } from "./_generated/server";
 import { extractTargets, type TargetRow } from "./lib/pdfTargets";
+import { ensurePdfGlobals } from "./lib/pdfEnv";
 import { normalizeVillage } from "./lib/villageMatch";
 import { requireAdmin } from "./adminAuth";
 
@@ -75,6 +75,10 @@ export const previewTargetPdf = action({
     };
 
     try {
+      // pdf.js needs a few browser globals that the Convex runtime lacks;
+      // installed before the module is loaded (dynamic import below).
+      ensurePdfGlobals();
+      const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: new Uint8Array(bytes) });
       const textResult = await parser.getText();
       const tableResult = await parser.getTable();
@@ -189,7 +193,10 @@ export const confirmTargetUpload = action({
     correctedRecords: v.number(),
     records: v.array(rowValidator),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ versionId: Id<"targetVersions">; versionNumber: number }> => {
     const admin = await requireAdmin(ctx, args.token);
     if (args.records.length === 0) {
       throw new ConvexError(
@@ -229,7 +236,23 @@ export const confirmTargetUpload = action({
 
 export const activateTargetVersion = action({
   args: { token: v.string(), versionId: v.id("targetVersions") },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    previousVersion: number | null;
+    nextVersion: number;
+    overallPrev: number | null;
+    overallNew: number | null;
+    change: number | null;
+    villageChanges: {
+      village: string;
+      kind: "changed" | "new" | "removed";
+      from?: number;
+      to?: number;
+    }[];
+    villageChangeCount: number;
+  }> => {
     const admin = await requireAdmin(ctx, args.token);
     return await ctx.runMutation(internal.targets.activateVersion, {
       versionId: args.versionId,
@@ -247,6 +270,76 @@ export const archiveTargetVersion = action({
       by: admin.username,
     });
     return { ok: true };
+  },
+});
+
+/**
+ * ADMIN: save district + village target allocation (manual management).
+ * History is preserved via audit entries; rows are never hard-deleted.
+ */
+export const saveManualAllocation = action({
+  args: {
+    token: v.string(),
+    districtTarget: v.optional(v.number()),
+    clearDistrictTarget: v.optional(v.boolean()),
+    allocationDate: v.optional(v.string()),
+    remarks: v.optional(v.string()),
+    villages: v.array(
+      v.object({
+        village: v.string(),
+        goatTarget: v.number(),
+        sheepTarget: v.number(),
+        active: v.optional(v.boolean()),
+        remarks: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    versionId: Id<"targetVersions">;
+    versionNumber: number;
+    changeCount: number;
+    changes: {
+      village: string;
+      kind: "new" | "changed" | "deactivated" | "reactivated";
+      from?: number;
+      to: number;
+    }[];
+    villageSum: number;
+    districtTarget: number | null;
+  }> => {
+    const admin = await requireAdmin(ctx, args.token);
+    if (
+      args.districtTarget !== undefined &&
+      (!Number.isFinite(args.districtTarget) || args.districtTarget < 0)
+    ) {
+      throw new ConvexError("District target must be zero or more.");
+    }
+    for (const row of args.villages) {
+      if (!row.village.trim()) {
+        throw new ConvexError("Every village row needs a village name.");
+      }
+      if (
+        !Number.isFinite(row.goatTarget) ||
+        !Number.isFinite(row.sheepTarget) ||
+        row.goatTarget < 0 ||
+        row.sheepTarget < 0
+      ) {
+        throw new ConvexError(
+          `Invalid target numbers for village “${row.village}”.`,
+        );
+      }
+    }
+    return await ctx.runMutation(internal.targets.saveManualAllocation, {
+      by: admin.username,
+      districtTarget: args.districtTarget,
+      clearDistrictTarget: args.clearDistrictTarget,
+      allocationDate: args.allocationDate,
+      remarks: args.remarks,
+      villages: args.villages,
+    });
   },
 });
 
