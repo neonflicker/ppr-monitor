@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { api, internal } from "./_generated/api";
 import { action, type ActionCtx } from "./_generated/server";
 import { buildCsvUrl, parseSheet } from "./lib/sheetParser";
+import { naturalKeyOf } from "./lib/villageMatch";
 
 const SESSION_EXPIRED = "SESSION_EXPIRED:";
 const AUTO_SYNC_MIN_MS = 5 * 60 * 1000;
@@ -108,6 +109,7 @@ type Counters = {
   validProcessed: number;
   invalidProcessed: number;
   sheetDuplicates: number;
+  eventDuplicates: number;
 };
 
 /**
@@ -187,21 +189,36 @@ export const syncNow = action({
       const existing = await ctx.runQuery(internal.sync.getExisting, {});
       type Existing = (typeof existing)[number];
       const byKey = new Map<string, Existing>();
-      for (const row of existing) byKey.set(row.externalKey, row);
+      const naturalSource = new Map<string, string>();
+      for (const row of existing) {
+        byKey.set(row.externalKey, row);
+        if (row.status === "valid" && row.naturalKey) {
+          naturalSource.set(row.naturalKey, row.source);
+        }
+      }
 
       const inserts: any[] = [];
       const updates: { id: Existing["id"]; row: any }[] = [];
       const seenInSheet = new Set<string>();
+      const batchNaturals = new Set<string>();
+      const reasonCount = new Map<string, number>();
+      const bump = (reason: string) =>
+        reasonCount.set(reason, (reasonCount.get(reason) ?? 0) + 1);
       const counters: Counters = {
         validProcessed: 0,
         invalidProcessed: 0,
         sheetDuplicates: 0,
+        eventDuplicates: 0,
       };
       let unchanged = 0;
 
       for (const row of parsed.records) {
+        const natural = naturalKeyOf(row);
+        row.naturalKey = natural || undefined;
+
         if (seenInSheet.has(row.externalKey)) {
           counters.sheetDuplicates++;
+          bump("Duplicate row within sheet (skipped)");
           continue;
         }
         seenInSheet.add(row.externalKey);
@@ -209,11 +226,35 @@ export const syncNow = action({
         else counters.validProcessed++;
 
         const match = byKey.get(row.externalKey);
+
+        // Never count the same real-world event twice across sources.
+        if (row.status === "valid" && natural && !match) {
+          const storedSource = naturalSource.get(natural);
+          if (storedSource) {
+            counters.eventDuplicates++;
+            bump(
+              storedSource === "bharat_pashudhan"
+                ? "Matches a Bharat Pashudhan record (not counted twice)"
+                : "Duplicate vaccination event (already stored)",
+            );
+            continue;
+          }
+        }
+        if (row.status === "valid" && natural) {
+          if (batchNaturals.has(natural)) {
+            counters.eventDuplicates++;
+            bump("Duplicate vaccination event within sheet (skipped)");
+            continue;
+          }
+          batchNaturals.add(natural);
+        }
+
         if (!match) {
           inserts.push(row);
         } else if (
           match.rawHash !== row.rawHash ||
-          match.status !== row.status
+          match.status !== row.status ||
+          (!match.naturalKey && row.naturalKey)
         ) {
           updates.push({ id: match.id, row });
         } else {
@@ -245,18 +286,15 @@ export const syncNow = action({
       }
 
       const invalidReasons = [...parsed.reasons];
-      if (counters.sheetDuplicates > 0) {
-        invalidReasons.push({
-          reason: "Duplicate row within sheet (skipped)",
-          count: counters.sheetDuplicates,
-        });
+      for (const [reason, count] of reasonCount) {
+        invalidReasons.push({ reason, count });
       }
 
       await ctx.runMutation(internal.sync.finishSync, {
         syncId,
         recordsRetrieved: parsed.totalRows,
         validRecords: counters.validProcessed,
-        duplicateRows: counters.sheetDuplicates,
+        duplicateRows: counters.sheetDuplicates + counters.eventDuplicates,
         newRecords,
         updatedRecords,
         unchangedRecords: unchanged,
@@ -273,7 +311,7 @@ export const syncNow = action({
         durationMs: Date.now() - startedAt,
         recordsRetrieved: parsed.totalRows,
         validRecords: counters.validProcessed,
-        duplicateRows: counters.sheetDuplicates,
+        duplicateRows: counters.sheetDuplicates + counters.eventDuplicates,
         newRecords,
         updatedRecords,
         unchangedRecords: unchanged,

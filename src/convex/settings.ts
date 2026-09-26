@@ -18,6 +18,21 @@ export const DEFAULT_SETTINGS = {
   pprValues: ["PPR", "PPR Vaccine", "PPRV", "PPR Vaccination"],
 };
 
+/** Personnel designation buckets used by the Daily Report. */
+export const DEFAULT_PERSONNEL = {
+  departmental: [
+    "VFA",
+    "Doctor",
+    "CVAS",
+    "LDA",
+    "MPW",
+    "Veterinary Officer",
+    "Livestock Inspector",
+  ],
+  semiGovernment: [] as string[],
+  private: [] as string[],
+};
+
 export type Settings = {
   districtName: string;
   state: string;
@@ -26,6 +41,10 @@ export type Settings = {
   programmeTarget?: number;
   vaccinationStartDate?: string;
   pprValues: string[];
+  personnelDepartmental: string[];
+  personnelSemiGovernment: string[];
+  personnelPrivate: string[];
+  defaultWasted: number;
 };
 
 /** Read current settings, falling back to program defaults. */
@@ -41,6 +60,10 @@ export async function readSettingsDoc(ctx: QueryCtx): Promise<Settings> {
       sheetUrl: DEFAULT_SETTINGS.sheetUrl,
       sheetGid: DEFAULT_SETTINGS.sheetGid,
       pprValues: [...DEFAULT_SETTINGS.pprValues],
+      personnelDepartmental: [...DEFAULT_PERSONNEL.departmental],
+      personnelSemiGovernment: [...DEFAULT_PERSONNEL.semiGovernment],
+      personnelPrivate: [...DEFAULT_PERSONNEL.private],
+      defaultWasted: 0,
     };
   }
   return {
@@ -51,6 +74,12 @@ export async function readSettingsDoc(ctx: QueryCtx): Promise<Settings> {
     programmeTarget: doc.programmeTarget,
     vaccinationStartDate: doc.vaccinationStartDate,
     pprValues: doc.pprValues,
+    personnelDepartmental:
+      doc.personnelDepartmental ?? [...DEFAULT_PERSONNEL.departmental],
+    personnelSemiGovernment:
+      doc.personnelSemiGovernment ?? [...DEFAULT_PERSONNEL.semiGovernment],
+    personnelPrivate: doc.personnelPrivate ?? [...DEFAULT_PERSONNEL.private],
+    defaultWasted: doc.defaultWasted ?? 0,
   };
 }
 
@@ -91,6 +120,10 @@ const patchArgs = {
   programmeTarget: v.optional(v.number()),
   vaccinationStartDate: v.optional(v.string()),
   pprValues: v.optional(v.array(v.string())),
+  personnelDepartmental: v.optional(v.array(v.string())),
+  personnelSemiGovernment: v.optional(v.array(v.string())),
+  personnelPrivate: v.optional(v.array(v.string())),
+  defaultWasted: v.optional(v.number()),
 };
 
 function buildPatch(args: Partial<Record<keyof typeof patchArgs, unknown>>) {
@@ -124,6 +157,23 @@ function buildPatch(args: Partial<Record<keyof typeof patchArgs, unknown>>) {
     patch.pprValues = values.length
       ? values
       : [...DEFAULT_SETTINGS.pprValues];
+  }
+  if (args.personnelDepartmental !== undefined)
+    patch.personnelDepartmental = (args.personnelDepartmental as string[])
+      .map((s) => s.trim())
+      .filter(Boolean);
+  if (args.personnelSemiGovernment !== undefined)
+    patch.personnelSemiGovernment = (args.personnelSemiGovernment as string[])
+      .map((s) => s.trim())
+      .filter(Boolean);
+  if (args.personnelPrivate !== undefined)
+    patch.personnelPrivate = (args.personnelPrivate as string[])
+      .map((s) => s.trim())
+      .filter(Boolean);
+  if (args.defaultWasted !== undefined) {
+    const wasted = args.defaultWasted as number;
+    patch.defaultWasted =
+      !Number.isFinite(wasted) || wasted < 0 ? 0 : Math.round(wasted);
   }
   return patch;
 }

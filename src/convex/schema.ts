@@ -42,6 +42,10 @@ const schema = defineSchema(
       programmeTarget: v.optional(v.number()),
       vaccinationStartDate: v.optional(v.string()),
       pprValues: v.array(v.string()),
+      personnelDepartmental: v.optional(v.array(v.string())),
+      personnelSemiGovernment: v.optional(v.array(v.string())),
+      personnelPrivate: v.optional(v.array(v.string())),
+      defaultWasted: v.optional(v.number()),
       updatedAt: v.number(),
     }).index("by_key", ["key"]),
 
@@ -93,10 +97,14 @@ const schema = defineSchema(
       durationMs: v.optional(v.number()),
     }),
 
-    // Normalised vaccination records (from the Google Sheet in v1).
+    // Normalised vaccination records (Google Sheet + Bharat Pashudhan).
     vaccinationRecords: defineTable({
-      source: v.union(v.literal("google_sheet")),
+      source: v.union(
+        v.literal("google_sheet"),
+        v.literal("bharat_pashudhan"),
+      ),
       externalKey: v.string(),
+      naturalKey: v.optional(v.string()),
       status: v.union(v.literal("valid"), v.literal("rejected")),
       rejectReason: v.optional(v.string()),
       isPpr: v.boolean(),
@@ -109,8 +117,10 @@ const schema = defineSchema(
       vaccinatorId: v.optional(v.string()),
       disease: v.optional(v.string()),
       species: v.optional(v.string()),
+      tagId: v.optional(v.string()),
       goats: v.number(),
       sheep: v.number(),
+      unspecified: v.optional(v.number()),
       taggedGoat: v.number(),
       taggedSheep: v.number(),
       wasted: v.number(),
@@ -122,7 +132,115 @@ const schema = defineSchema(
     })
       .index("by_key", ["externalKey"])
       .index("by_status", ["status"])
-      .index("by_dateKey", ["dateKey"]),
+      .index("by_dateKey", ["dateKey"])
+      .index("by_naturalKey", ["naturalKey"]),
+
+    // ---- Source 1: TARGET PDF (official targets) ----
+    targetVersions: defineTable({
+      versionNumber: v.number(),
+      fileName: v.string(),
+      storageId: v.optional(v.string()),
+      uploadedAt: v.number(),
+      uploadedBy: v.string(),
+      overallTarget: v.optional(v.number()),
+      overallSource: v.optional(
+        v.union(v.literal("pdf"), v.literal("sum")),
+      ),
+      goatTarget: v.optional(v.number()),
+      sheepTarget: v.optional(v.number()),
+      villageCount: v.number(),
+      recordCount: v.number(),
+      pages: v.optional(v.number()),
+      confidence: v.optional(v.number()),
+      warnings: v.optional(v.array(v.string())),
+      extraction: v.union(
+        v.literal("tables"),
+        v.literal("text"),
+        v.literal("no_text"),
+      ),
+      status: v.union(
+        v.literal("draft"),
+        v.literal("active"),
+        v.literal("archived"),
+      ),
+      activatedAt: v.optional(v.number()),
+      archivedAt: v.optional(v.number()),
+      correctedRecords: v.optional(v.number()),
+    }).index("by_status", ["status"]),
+
+    targetRecords: defineTable({
+      versionId: v.id("targetVersions"),
+      district: v.optional(v.string()),
+      block: v.optional(v.string()),
+      circle: v.optional(v.string()),
+      village: v.string(),
+      villageCode: v.optional(v.string()),
+      species: v.optional(v.string()),
+      goatTarget: v.optional(v.number()),
+      sheepTarget: v.optional(v.number()),
+      totalTarget: v.number(),
+      sourcePage: v.optional(v.number()),
+      confidence: v.optional(v.number()),
+      manuallyCorrected: v.boolean(),
+      normalizedVillage: v.string(),
+    })
+      .index("by_version", ["versionId"])
+      .index("by_village", ["normalizedVillage"]),
+
+    // Manual village alias map: normalised alias → canonical target village.
+    villageMappings: defineTable({
+      alias: v.string(),
+      canonical: v.string(),
+      createdAt: v.number(),
+      createdBy: v.optional(v.string()),
+    }).index("by_alias", ["alias"]),
+
+    // ---- Source 3: BHARAT PASHUDHAN uploads ----
+    bharatUploads: defineTable({
+      fileName: v.string(),
+      uploadedAt: v.number(),
+      uploadedBy: v.string(),
+      totalRows: v.number(),
+      validRows: v.number(),
+      newRecords: v.number(),
+      duplicateRows: v.number(),
+      crossSourceDuplicates: v.number(),
+      rejectedRows: v.number(),
+      rejectedReasons: v.array(
+        v.object({ reason: v.string(), count: v.number() }),
+      ),
+      mappedColumns: v.array(v.string()),
+      unmappedColumns: v.array(v.string()),
+      status: v.union(v.literal("completed"), v.literal("failed")),
+      error: v.optional(v.string()),
+    }),
+
+    dailyReports: defineTable({
+      reportDate: v.string(),
+      generatedAt: v.number(),
+      generatedBy: v.string(),
+      district: v.string(),
+      vaccinationStartDate: v.optional(v.string()),
+      goats: v.number(),
+      sheep: v.number(),
+      wasted: v.number(),
+      taggedGoat: v.number(),
+      taggedSheep: v.number(),
+      farmers: v.number(),
+      departmental: v.number(),
+      semiGovernment: v.number(),
+      privatePersonnel: v.number(),
+      notes: v.optional(v.string()),
+    }).index("by_date", ["reportDate"]),
+
+    // Target change / activation audit trail.
+    auditLog: defineTable({
+      action: v.string(),
+      summary: v.string(),
+      details: v.optional(v.string()),
+      at: v.number(),
+      by: v.optional(v.string()),
+    }).index("by_at", ["at"]),
   },
   {
     schemaValidation: false,

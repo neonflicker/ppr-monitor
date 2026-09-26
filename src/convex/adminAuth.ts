@@ -64,7 +64,7 @@ function assertPassword(password: string) {
   }
 }
 
-async function requireAdmin(
+export async function requireAdmin(
   ctx: ActionCtx,
   token: string,
 ): Promise<{ username: string; displayName: string }> {
@@ -240,6 +240,10 @@ export const updateSettings = action({
     programmeTarget: v.optional(v.number()),
     vaccinationStartDate: v.optional(v.string()),
     pprValues: v.optional(v.array(v.string())),
+    personnelDepartmental: v.optional(v.array(v.string())),
+    personnelSemiGovernment: v.optional(v.array(v.string())),
+    personnelPrivate: v.optional(v.array(v.string())),
+    defaultWasted: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<{ ok: boolean }> => {
     await requireAdmin(ctx, args.token);

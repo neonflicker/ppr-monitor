@@ -24,7 +24,9 @@ export type FieldKey =
   | "email"
   | "remarks"
   | "disease"
-  | "species";
+  | "species"
+  | "quantity"
+  | "tagId";
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   recordId: "Record ID",
@@ -44,6 +46,8 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   remarks: "Remarks",
   disease: "Disease / Vaccine",
   species: "Species",
+  quantity: "Number Vaccinated",
+  tagId: "Tag ID",
 };
 
 /** Minimal RFC-4180-ish CSV parser (quotes, escaped quotes, newlines in quotes). */
@@ -105,8 +109,20 @@ function matchField(norm: string, raw: string): FieldKey | null {
   if (has("record", "id") || has("unique", "id") || has("submission", "id"))
     return "recordId";
   if (norm === "timestamp" || has("time", "stamp")) return "timestamp";
-  if (norm === "date" || (has("date") && !/(vaccin|wast|tagged|farmer|start)/.test(norm)))
+  // "Date", "Vaccination Date" … but not "Goat Vaccinated on Date" etc.
+  if (
+    norm === "date" ||
+    (has("date") && !/(goat|sheep|tagged|farmer|wast|start|timestamp)/.test(norm))
+  )
     return "date";
+  if (/^tag$|^tags$|tagid|tagno|tagnumber|eartag/.test(norm)) return "tagId";
+  if (
+    has("quantity") ||
+    has("number", "vaccinated") ||
+    has("animal", "vaccinated") ||
+    has("count", "vaccinated")
+  )
+    return "quantity";
   if (has("vaccinator", "id")) return "vaccinatorId";
   if (has("vaccinator") && has("name")) return "vaccinator";
   if (norm === "vaccinator" || norm === "nameofthevaccinator") return "vaccinator";
@@ -280,6 +296,7 @@ export function isPprRecord(
 
 export interface NormalizedRow {
   externalKey: string;
+  naturalKey?: string;
   rawHash: string;
   status: "valid" | "rejected";
   rejectReason?: string;
