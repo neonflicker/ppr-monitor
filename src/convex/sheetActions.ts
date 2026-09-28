@@ -4,7 +4,7 @@ import { ConvexError, v } from "convex/values";
 import { createHash } from "node:crypto";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action, type ActionCtx } from "./_generated/server";
+import { action, internalAction, type ActionCtx } from "./_generated/server";
 import {
   buildCsvUrl,
   diffSheetRecords,
@@ -13,7 +13,15 @@ import {
 
 const SESSION_EXPIRED = "SESSION_EXPIRED:";
 const AUTO_SYNC_MIN_MS = 5 * 60 * 1000;
-const PUBLIC_SYNC_COOLDOWN_MS = 15 * 60 * 1000;
+// Short cooldown: long enough to stop anonymous visitors from hammering the
+// Google export endpoint, short enough that a human pressing Refresh after
+// editing the sheet actually gets fresh data (was 15 minutes, which made the
+// button look like it silently did nothing).
+const PUBLIC_SYNC_COOLDOWN_MS = 60 * 1000;
+// Background cron guard: skip when a sync finished moments ago or is running.
+const CRON_MIN_GAP_MS = 90 * 1000;
+const CRON_ERROR_BACKOFF_MS = 2 * 60 * 1000;
+const STALE_RUNNING_MS = 5 * 60 * 1000;
 const BATCH_SIZE = 100;
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_SHEET_BYTES = 25 * 1024 * 1024;
@@ -194,6 +202,42 @@ export const publicRefresh = action({
       }
     }
     return await performSync(ctx, "auto", "public");
+  },
+});
+
+/**
+ * SCHEDULED SYNC (crons.ts): runs every couple of minutes so the dashboard is
+ * near-real-time without anyone opening a page. Self-throttles so overlapping
+ * ticks and rapid repeat runs are no-ops.
+ */
+export const cronSync = internalAction({
+  args: {},
+  handler: async (ctx): Promise<SyncSummary> => {
+    const latest = await ctx.runQuery(api.sync.latest, {});
+    const now = Date.now();
+    if (latest) {
+      if (
+        latest.status === "running" &&
+        now - latest.startedAt < STALE_RUNNING_MS
+      ) {
+        return { skipped: true as const };
+      }
+      if (
+        latest.status === "done" &&
+        latest.finishedAt &&
+        now - latest.finishedAt < CRON_MIN_GAP_MS
+      ) {
+        return { skipped: true as const };
+      }
+      if (
+        latest.status === "error" &&
+        latest.finishedAt &&
+        now - latest.finishedAt < CRON_ERROR_BACKOFF_MS
+      ) {
+        return { skipped: true as const };
+      }
+    }
+    return await performSync(ctx, "auto", "cron");
   },
 });
 

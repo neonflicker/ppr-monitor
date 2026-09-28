@@ -457,10 +457,13 @@ export default function PublicDashboard() {
       if (result.skipped) {
         if (!silent) toast.info("Data is already up to date");
       } else if (!silent) {
+        const rejected = result.rejectedRecords ?? 0;
         toast.success("Data refreshed", {
           description: `${nf.format(result.recordsRetrieved ?? 0)} rows read · ${
             result.newRecords ?? 0
-          } new · ${result.updatedRecords ?? 0} updated`,
+          } new · ${result.updatedRecords ?? 0} updated${
+            rejected ? ` · ${rejected} rejected (see Data Quality)` : ""
+          }`,
         });
       }
     } catch (err) {
@@ -475,7 +478,7 @@ export default function PublicDashboard() {
     if (!overview || autoTried.current) return;
     autoTried.current = true;
     const last = overview.lastSuccess;
-    const stale = !last || (last.finishedAt ?? 0) < Date.now() - 15 * 60 * 1000;
+    const stale = !last || (last.finishedAt ?? 0) < Date.now() - 5 * 60 * 1000;
     if (stale) void handleRefresh(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overview]);
