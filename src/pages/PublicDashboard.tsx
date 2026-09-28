@@ -1,5 +1,6 @@
 import HistoryChart from "@/components/public/HistoryChart";
 import DailyReport from "@/components/public/DailyReport";
+import NoticeBoard from "@/components/public/NoticeBoard";
 import ScopeFilter, {
   type Scope,
   type ScopeData,
@@ -727,6 +728,9 @@ function DashboardView({
             </Button>
           </div>
         )}
+
+        {/* ---------------- NOTICE BOARD (public, filter-independent) ---------------- */}
+        <NoticeBoard />
 
         {/* ---------------- Summary cards ---------------- */}
         <section id="dashboard" className="scroll-mt-28 space-y-5">

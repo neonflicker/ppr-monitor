@@ -294,6 +294,19 @@ const schema = defineSchema(
       at: v.number(),
       by: v.optional(v.string()),
     }).index("by_at", ["at"]),
+
+    // Public NOTICE BOARD (independent feature — no relation to the
+    // vaccination records, Google Sheet sync, or allocation pipeline).
+    // One row = one public bullet point; only active rows are shown.
+    notices: defineTable({
+      title: v.optional(v.string()),
+      content: v.string(),
+      active: v.boolean(),
+      sortOrder: v.number(),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+      createdBy: v.optional(v.string()),
+    }).index("by_sort", ["sortOrder"]),
   },
   {
     schemaValidation: false,
