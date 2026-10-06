@@ -49,17 +49,17 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
   const safePage = Math.min(page, pages - 1);
   const start = safePage * PAGE_SIZE;
   const visible = untouched.slice(start, start + PAGE_SIZE);
+  const rangeStart = untouched.length === 0 ? 0 : start + 1;
+  const rangeEnd = Math.min(start + PAGE_SIZE, untouched.length);
 
   // A different vaccinator always starts at the first page.
   useEffect(() => {
     setPage(0);
   }, [scope.user]);
 
-  if (!selectedUser) return null;
-
   return (
     <div className="rounded-md border border-border bg-card px-3 py-3">
-      {/* ---- User name at the top of the table ---- */}
+      {/* ---- Header + spec-required subtitle ---- */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
         <div className="flex items-center gap-2">
           <MapPinned className="size-4 shrink-0 text-primary" />
@@ -67,12 +67,23 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
             Untouched Villages
           </h3>
         </div>
-        <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-          {selectedUser.name}
-        </span>
+        {selectedUser && (
+          <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+            Vaccinator: {selectedUser.name}
+          </span>
+        )}
       </div>
+      <p className="pt-1.5 text-xs text-muted-foreground">
+        Villages allotted to the selected vaccinator with no vaccination
+        achievement yet.
+      </p>
 
-      {!data ? (
+      {!selectedUser ? (
+        /* ---- ALL USERS: never merge every vaccinator's villages ---- */
+        <p className="px-1 py-6 text-center text-sm font-medium text-muted-foreground">
+          Select a vaccinator to view untouched villages.
+        </p>
+      ) : !data ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="size-5 animate-spin text-primary" />
         </div>
@@ -83,15 +94,20 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
         </p>
       ) : (
         <>
+          {/* ---- Dynamic total count ---- */}
+          <p className="pt-2 text-sm font-semibold text-foreground tabular-nums">
+            {nf.format(untouched.length)} untouched village
+            {untouched.length === 1 ? "" : "es"}
+          </p>
+
           {/* ---- Desktop table ---- */}
           <div className="mt-2 hidden overflow-x-auto sm:block">
-            <table className="w-full min-w-[520px] text-left text-sm">
+            <table className="w-full min-w-[420px] text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
                   <th className="py-2 pl-2 pr-3 font-medium">S.No</th>
                   <th className="py-2 pr-3 font-medium">Village</th>
                   <th className="py-2 pr-3 text-right font-medium">Target</th>
-                  <th className="py-2 pr-3 text-right font-medium">Achievement</th>
                   <th className="py-2 pr-3 font-medium">Status</th>
                 </tr>
               </thead>
@@ -107,9 +123,6 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
                     <td className="py-2.5 pr-3 font-medium">{row.name}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">
                       {nf.format(row.target)}
-                    </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">
-                      {nf.format(row.achievement)}
                     </td>
                     <td className="py-2.5 pr-3">
                       <span className="inline-block whitespace-nowrap rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
@@ -129,50 +142,42 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
                 key={`card-${row.key}`}
                 className="rounded-md border border-border bg-background px-3 py-2.5"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-1.5">
                     <span className="shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">
                       {start + index + 1}.
                     </span>
-                    <p className="truncate text-sm font-semibold">{row.name}</p>
+                    <p className="break-words text-sm font-semibold">{row.name}</p>
                   </div>
                   <span className="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
                     NOT STARTED
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground tabular-nums">
-                  Target {nf.format(row.target)} · Achievement{" "}
-                  {nf.format(row.achievement)}
+                  Target {nf.format(row.target)}
                 </p>
               </div>
             ))}
           </div>
 
           {/* ---- Slider pagination: 10 entries per view ---- */}
-          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
-            <p className="text-xs text-muted-foreground tabular-nums">
-              Showing {untouched.length === 0 ? 0 : start + 1}–
-              {Math.min(start + PAGE_SIZE, untouched.length)} of {untouched.length}{" "}
-              untouched
+          <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <Slider
+                value={[safePage]}
+                min={0}
+                max={pages - 1}
+                step={1}
+                onValueChange={(values) =>
+                  setPage(Math.max(0, Math.min(values[0] ?? 0, pages - 1)))
+                }
+                aria-label="Scroll untouched villages"
+                className="min-w-0 flex-1"
+              />
+            </div>
+            <p className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {rangeStart}–{rangeEnd} of {untouched.length}
             </p>
-            {pages > 1 && (
-              <div className="flex min-w-[180px] flex-1 items-center gap-2.5">
-                <Slider
-                  value={[safePage]}
-                  min={0}
-                  max={pages - 1}
-                  step={1}
-                  onValueChange={(values) =>
-                    setPage(Math.max(0, Math.min(values[0] ?? 0, pages - 1)))
-                  }
-                  aria-label="Scroll untouched villages"
-                  className={cn("flex-1")}
-                />
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  {safePage + 1}/{pages}
-                </span>
-              </div>
-            )}
           </div>
         </>
       )}
