@@ -791,7 +791,7 @@ function DashboardView({
                 Dispensary PPR Vaccination Progress
               </h3>
               {hasTarget && completion !== null && (
-                <p className="font-title text-3xl font-bold text-primary tabular-nums sm:text-4xl">
+                <p className="font-title text-3xl font-bold text-red-600 tabular-nums sm:text-4xl">
                   {completion.toFixed(2)}% COMPLETED
                 </p>
               )}
@@ -801,7 +801,7 @@ function DashboardView({
               <>
                 <div className="mt-3 h-5 overflow-hidden rounded-full border border-border bg-muted">
                   <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-700"
+                    className="h-full rounded-full bg-red-600 transition-[width] duration-700"
                     style={{ width: `${Math.min(completion ?? 0, 100)}%` }}
                   />
                 </div>
@@ -829,7 +829,7 @@ function DashboardView({
                     <dd className="font-title text-xl font-bold tabular-nums">
                       {nf.format(remaining ?? 0)}
                       {excess > 0 && (
-                        <span className="ml-2 text-sm font-semibold text-primary">
+                        <span className="ml-2 text-sm font-semibold text-red-600">
                           +{nf.format(excess)} excess
                         </span>
                       )}

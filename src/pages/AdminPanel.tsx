@@ -2,6 +2,7 @@ import AdminStatus from "@/components/admin/AdminStatus";
 import BharatUpload from "@/components/admin/BharatUpload";
 import DataValidation from "@/components/admin/DataValidation";
 import ImportHistory from "@/components/admin/ImportHistory";
+import NoticeManager from "@/components/admin/NoticeManager";
 import TargetAllocation from "@/components/admin/TargetAllocation";
 import UserVillageAllocation from "@/components/admin/UserVillageAllocation";
 import { Mark } from "@/components/Mark";
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { format } from "date-fns";
 import {
+  Bell,
   ClipboardCheck,
   ExternalLink,
   History,
@@ -34,6 +36,7 @@ type TabId =
   | "targets"
   | "history"
   | "validation"
+  | "notices"
   | "settings";
 
 const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
@@ -43,6 +46,7 @@ const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
   { id: "targets", label: "Manual Village Targets", icon: Target },
   { id: "history", label: "Import History", icon: History },
   { id: "validation", label: "Data Validation", icon: ClipboardCheck },
+  { id: "notices", label: "Notice Board", icon: Bell },
   { id: "settings", label: "Programme Configuration", icon: Settings2 },
 ];
 
@@ -77,6 +81,8 @@ export default function AdminPanel() {
         return <ImportHistory />;
       case "validation":
         return <DataValidation />;
+      case "notices":
+        return <NoticeManager />;
       case "settings":
         return (
           <div className="space-y-4">
