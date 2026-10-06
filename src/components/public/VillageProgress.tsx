@@ -62,7 +62,10 @@ const FILTERS: { id: string; label: string; test: (row: Row) => boolean }[] = [
   {
     id: "not-started",
     label: "Not Started",
-    test: (r) => r.status === "NOT STARTED",
+    // §1: NOT STARTED is defined by the canonical village achievement
+    // itself (achievement === 0), never by a derived status string — and
+    // only for allocated villages (unallocated rows keep UNALLOCATED).
+    test: (r) => r.allocated && r.achievement === 0,
   },
 ];
 

@@ -42,13 +42,16 @@ export default function NoticeBoard() {
           </li>
         ) : (
           notices.map((notice) => (
-            <li key={notice._id} className="flex gap-2 text-sm leading-relaxed">
-              <span className="shrink-0 text-primary" aria-hidden="true">
+            <li key={notice._id} className="flex gap-2 leading-relaxed">
+              <span
+                className="shrink-0 text-lg font-bold text-primary"
+                aria-hidden="true"
+              >
                 •
               </span>
-              <span className="min-w-0 break-words whitespace-pre-line">
+              <span className="min-w-0 break-words whitespace-pre-line text-lg font-bold text-primary">
                 {notice.title && (
-                  <span className="font-semibold">{notice.title} — </span>
+                  <span className="font-bold">{notice.title} — </span>
                 )}
                 {notice.content}
               </span>
