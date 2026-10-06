@@ -6,6 +6,7 @@ import ScopeFilter, {
   type ScopeData,
 } from "@/components/public/ScopeFilter";
 import VillageProgress, { StatusBadge } from "@/components/public/VillageProgress";
+import UntouchedVillages from "@/components/public/UntouchedVillages";
 import { Mark } from "@/components/Mark";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
@@ -985,6 +986,7 @@ function DashboardView({
             sub="Search, filter and sort every village"
           />
           <VillageProgress scope={scope} scopeData={scopeData} />
+          <UntouchedVillages scope={scope} scopeData={scopeData} />
         </section>
 
         {/* ---------------- History ---------------- */}

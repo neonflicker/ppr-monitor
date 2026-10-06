@@ -368,15 +368,17 @@ export default function VillageProgress({
 
       {/* ---- Desktop table ---- */}
       <div className="hidden overflow-x-auto rounded-md border border-border bg-card sm:block">
-        <table className="w-full min-w-[900px] text-left text-sm">
+        <table className="w-full min-w-[960px] text-left text-sm">
           <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur">
             <tr className="border-b border-border text-[11px] uppercase tracking-wider">
+              <th className="py-2 pl-3 pr-3 font-medium text-muted-foreground">
+                S.No
+              </th>
               <SortHeader
                 label="Village"
                 active={sortKey === "village"}
                 dir={dir}
                 onClick={() => toggleSort("village")}
-                className="pl-3"
               />
               <SortHeader
                 label="Target"
@@ -420,17 +422,20 @@ export default function VillageProgress({
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">
                   No village matches your search or filter.
                 </td>
               </tr>
             )}
-            {visible.map((row) => (
+            {visible.map((row, index) => (
               <tr
                 key={`${row.village}-${row.allocated}`}
                 className="border-b border-border/60 last:border-0 hover:bg-muted/40"
               >
-                <td className="py-2.5 pl-3 pr-3 font-medium">
+                <td className="py-2.5 pl-3 pr-3 text-muted-foreground tabular-nums">
+                  {index + 1}
+                </td>
+                <td className="py-2.5 pr-3 font-medium">
                   {row.village}
                   {row.block && (
                     <span className="ml-1.5 text-xs text-muted-foreground">
@@ -475,7 +480,8 @@ export default function VillageProgress({
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border bg-muted/60 text-sm font-semibold">
-              <td className="px-3 py-2.5 uppercase tracking-wider">
+              <td className="px-3 py-2.5" aria-hidden="true" />
+              <td className="py-2.5 pr-3 uppercase tracking-wider">
                 Dispensary Total
               </td>
               <td className="py-2.5 pr-3 text-right tabular-nums" title="Village Target Allocated">
@@ -517,13 +523,16 @@ export default function VillageProgress({
             No village matches your search.
           </p>
         )}
-        {visible.map((row) => (
+        {visible.map((row, index) => (
           <div
             key={`card-${row.village}-${row.allocated}`}
             className="rounded-md border border-border bg-card px-3 py-3"
           >
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-1.5">
+                <span className="shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">
+                  {index + 1}.
+                </span>
                 <MapPin className="size-3.5 shrink-0 text-primary" />
                 <p className="text-sm font-semibold leading-tight">{row.village}</p>
               </div>
