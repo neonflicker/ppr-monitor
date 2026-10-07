@@ -18,6 +18,8 @@ import { format } from "date-fns";
 import {
   AlertTriangle,
   ArrowDown,
+  ArrowRight,
+  ClipboardList,
   Database,
   FileText,
   History,
@@ -732,6 +734,25 @@ function DashboardView({
 
         {/* ---------------- NOTICE BOARD (public, filter-independent) ---------------- */}
         <NoticeBoard />
+
+        {/* ---------------- Public vaccination report form ---------------- */}
+        <div className="my-4 flex justify-center px-1">
+          <Button
+            asChild
+            size="lg"
+            className="h-12 w-full gap-2.5 rounded-md px-5 text-sm font-bold shadow-sm transition-colors hover:shadow-md sm:w-auto sm:px-7"
+          >
+            <a
+              href="https://forms.gle/CLpeWYLfmBrE5qLj6"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <ClipboardList aria-hidden="true" />
+              <span>REPORT TODAY'S VACCINATION</span>
+              <ArrowRight aria-hidden="true" />
+            </a>
+          </Button>
+        </div>
 
         {/* ---------------- Summary cards ---------------- */}
         <section id="dashboard" className="scroll-mt-28 space-y-5">
