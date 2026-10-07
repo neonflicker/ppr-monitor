@@ -136,12 +136,14 @@ function SummaryCard({
   sub,
   tone,
   tint = "tint-neutral-blue",
+  contrast = false,
 }: {
   label: string;
   value: string;
   sub: string;
   tone?: string;
   tint?: string;
+  contrast?: boolean;
 }) {
   return (
     <div
@@ -150,18 +152,31 @@ function SummaryCard({
         tint,
       )}
     >
-      <p className="text-[10px] font-semibold uppercase leading-tight tracking-[0.12em] text-muted-foreground">
+      <p
+        className={cn(
+          "text-[10px] font-semibold uppercase leading-tight tracking-[0.12em] text-muted-foreground",
+          contrast && "text-white",
+        )}
+      >
         {label}
       </p>
       <p
         className={cn(
           "font-title text-3xl font-bold leading-none tracking-tight tabular-nums sm:text-4xl",
           tone,
+          contrast && "text-white",
         )}
       >
         {value}
       </p>
-      <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>
+      <p
+        className={cn(
+          "mt-1 text-[11px] leading-tight text-muted-foreground",
+          contrast && "text-white",
+        )}
+      >
+        {sub}
+      </p>
     </div>
   );
 }
@@ -766,13 +781,15 @@ function DashboardView({
               label="Total PPR Vaccinated"
               value={nf.format(achievement)}
               sub="Valid unique vaccination records"
-              tint="tint-blue"
+              tint="bg-[#2563A6] border-[#1E4F82]"
+              contrast
             />
             <SummaryCard
               label="Today's Vaccination"
               value={nf.format(today.total)}
               sub="Animals vaccinated today"
-              tint="tint-sky"
+              tint="bg-[#0891B2] border-[#067A95]"
+              contrast
             />
             <SummaryCard
               label="Total Programme Target"
@@ -780,13 +797,15 @@ function DashboardView({
               sub={
                 hasTarget ? "Dispensary programme target" : "Target data pending admin setup"
               }
+              tint="bg-[#1E3A5F] border-[#172C47]"
+              contrast
             />
             <SummaryCard
               label="Completion"
               value={completion !== null ? `${completion.toFixed(2)}%` : "—"}
               sub="Target completion"
-              tone="text-primary"
-              tint="tint-blue"
+              tint="bg-[#15803D] border-[#11632F]"
+              contrast
             />
             <SummaryCard
               label="Remaining"
@@ -796,13 +815,15 @@ function DashboardView({
                   ? `Excess over target: ${nf.format(excess)}`
                   : "Animals remaining"
               }
-              tint="tint-amber"
+              tint="bg-[#D97706] border-[#B65F05]"
+              contrast
             />
             <SummaryCard
               label="Bharat Pashudhan Data"
               value={nf.format(overview.bharat.uploadedRows)}
               sub="Total uploaded records"
-              tint="tint-lavender"
+              tint="bg-[#6D4C9B] border-[#563B7C]"
+              contrast
             />
           </div>
 
