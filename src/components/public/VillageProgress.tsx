@@ -1,13 +1,15 @@
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import { normalizeVillageClient } from "@/lib/scopeKeys";
 import { statusFor } from "@/lib/statusFor";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { ChevronDown, ChevronUp, Loader2, MapPin, Search } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 const nf = new Intl.NumberFormat("en-IN");
+const VILLAGE_PAGE_SIZE = 10;
 
 type Row = {
   village: string;
@@ -182,6 +184,7 @@ export default function VillageProgress({
   const [filter, setFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("village");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
+  const [windowStart, setWindowStart] = useState(0);
 
   // Scope keys: the allocation row keys are already normalised server-side.
   const selectedVillageKey =
@@ -257,12 +260,36 @@ export default function VillageProgress({
   }, [rows, search, filter, sortKey, dir]);
 
   const toggleSort = (key: SortKey) => {
+    setWindowStart(0);
     if (key === sortKey) setDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(key);
       setDir(key === "village" ? "asc" : "desc");
     }
   };
+
+  useEffect(() => {
+    setWindowStart(0);
+  }, [
+    search,
+    filter,
+    sortKey,
+    dir,
+    normalizedScope.user,
+    normalizedScope.village,
+  ]);
+
+  const maxWindowStart = Math.max(0, visible.length - VILLAGE_PAGE_SIZE);
+  const safeWindowStart = Math.min(windowStart, maxWindowStart);
+  const displayedRows = visible.slice(
+    safeWindowStart,
+    safeWindowStart + VILLAGE_PAGE_SIZE,
+  );
+  const rangeStart = visible.length === 0 ? 0 : safeWindowStart + 1;
+  const rangeEnd = Math.min(
+    safeWindowStart + VILLAGE_PAGE_SIZE,
+    visible.length,
+  );
 
   // Scoped sums over the (allocation-adjusted, scope-filtered) rows.
   // Declared BEFORE any early return so the hook count is always identical.
@@ -308,7 +335,10 @@ export default function VillageProgress({
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setWindowStart(0);
+            setSearch(e.target.value);
+          }}
           placeholder="Search village name (e.g. bog)"
           className="h-11 pl-9 text-base"
           aria-label="Search village"
@@ -320,7 +350,10 @@ export default function VillageProgress({
           <button
             key={f.id}
             type="button"
-            onClick={() => setFilter(f.id)}
+            onClick={() => {
+              setWindowStart(0);
+              setFilter(f.id);
+            }}
             className={cn(
               "whitespace-nowrap rounded border px-2.5 py-1.5 text-xs font-medium transition-colors",
               filter === f.id
@@ -359,7 +392,7 @@ export default function VillageProgress({
           </button>
         ))}
         <span className="ml-auto tabular-nums">
-          {visible.length} of {rows.length} villages
+          {visible.length} of {visible.length} villages
         </span>
       </div>
 
@@ -430,13 +463,13 @@ export default function VillageProgress({
                 </td>
               </tr>
             )}
-            {visible.map((row, index) => (
+            {displayedRows.map((row, index) => (
               <tr
                 key={`${row.village}-${row.allocated}`}
                 className="border-b border-border/60 last:border-0 hover:bg-muted/40"
               >
                 <td className="py-2.5 pl-3 pr-3 text-muted-foreground tabular-nums">
-                  {index + 1}
+                  {safeWindowStart + index + 1}
                 </td>
                 <td className="py-2.5 pr-3 font-medium">
                   {row.village}
@@ -482,6 +515,30 @@ export default function VillageProgress({
             ))}
           </tbody>
           <tfoot>
+            {visible.length > 0 && (
+              <tr className="border-t border-border/60">
+                <td colSpan={11} className="px-3 py-2">
+                  {visible.length > VILLAGE_PAGE_SIZE && (
+                    <Slider
+                      value={[safeWindowStart]}
+                      min={0}
+                      max={maxWindowStart}
+                      step={1}
+                      onValueChange={(values) =>
+                        setWindowStart(
+                          Math.max(0, Math.min(values[0] ?? 0, maxWindowStart)),
+                        )
+                      }
+                      aria-label="Scroll village progress rows"
+                      className="w-full max-w-xl py-2 [&_[data-slot=slider-thumb]]:size-6"
+                    />
+                  )}
+                  <p className="text-center text-xs text-muted-foreground tabular-nums">
+                    {rangeStart}–{rangeEnd} of {visible.length}
+                  </p>
+                </td>
+              </tr>
+            )}
             <tr className="border-t-2 border-border bg-muted/60 text-sm font-semibold">
               <td className="px-3 py-2.5" aria-hidden="true" />
               <td className="py-2.5 pr-3 uppercase tracking-wider">
@@ -521,12 +578,7 @@ export default function VillageProgress({
 
       {/* ---- Mobile cards ---- */}
       <div className="space-y-2 sm:hidden">
-        {visible.length === 0 && (
-          <p className="rounded border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-            No village matches your search.
-          </p>
-        )}
-        {visible.map((row, index) => (
+        {displayedRows.map((row, index) => (
           <div
             key={`card-${row.village}-${row.allocated}`}
             className="rounded-md border border-border bg-card px-3 py-3"
@@ -534,7 +586,7 @@ export default function VillageProgress({
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <span className="shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">
-                  {index + 1}.
+                  {safeWindowStart + index + 1}.
                 </span>
                 <MapPin className="size-3.5 shrink-0 text-primary" />
                 <p className="text-sm font-semibold leading-tight">{row.village}</p>
@@ -579,6 +631,33 @@ export default function VillageProgress({
           </div>
         ))}
       </div>
+      {visible.length === 0 && (
+        <p className="rounded border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground sm:hidden">
+          No village matches your search or filter.
+        </p>
+      )}
+      {visible.length > 0 && (
+        <div className="flex flex-col items-center gap-1.5 px-2 pt-1 sm:hidden">
+          {visible.length > VILLAGE_PAGE_SIZE && (
+            <Slider
+              value={[safeWindowStart]}
+              min={0}
+              max={maxWindowStart}
+              step={1}
+              onValueChange={(values) =>
+                setWindowStart(
+                  Math.max(0, Math.min(values[0] ?? 0, maxWindowStart)),
+                )
+              }
+              aria-label="Scroll village progress rows"
+              className="w-full py-2 [&_[data-slot=slider-thumb]]:size-6"
+            />
+          )}
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {rangeStart}–{rangeEnd} of {visible.length}
+          </p>
+        </div>
+      )}
 
       {/* ---- Dispensary totals: programme target vs village allocation,
               never silently merged. When a scope filter is active the scoped
