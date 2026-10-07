@@ -2,7 +2,6 @@ import { Slider } from "@/components/ui/slider";
 import { api } from "@/convex/_generated/api";
 import { normalizeVillageClient } from "@/lib/scopeKeys";
 import type { Scope, ScopeData } from "@/lib/scopeLink";
-import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { Loader2, MapPinned } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -45,14 +44,15 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [selectedUser, data, scopeData.villageNames, scopeData.villageTargets]);
 
-  const pages = Math.max(1, Math.ceil(untouched.length / PAGE_SIZE));
-  const safePage = Math.min(page, pages - 1);
-  const start = safePage * PAGE_SIZE;
+  // Vertical slider drives a free-scrolling START OFFSET in
+  // [0, list − PAGE_SIZE]: the window always shows 10 villages and the full
+  // list is walkable (1–10, 11–20, …, ending on a partial window like
+  // 16–25). Hidden altogether when everything fits in one window.
+  const maxStart = Math.max(0, untouched.length - PAGE_SIZE);
+  const start = Math.min(page, maxStart);
   const visible = untouched.slice(start, start + PAGE_SIZE);
-  const rangeStart = untouched.length === 0 ? 0 : start + 1;
-  const rangeEnd = Math.min(start + PAGE_SIZE, untouched.length);
 
-  // A different vaccinator always starts at the first page.
+  // A different vaccinator always starts at the first window.
   useEffect(() => {
     setPage(0);
   }, [scope.user]);
@@ -94,90 +94,99 @@ export default function UntouchedVillages({ scope, scopeData }: Props) {
         </p>
       ) : (
         <>
-          {/* ---- Dynamic total count ---- */}
+          {/* ---- Dynamic total count (near the heading) ---- */}
           <p className="pt-2 text-sm font-semibold text-foreground tabular-nums">
             {nf.format(untouched.length)} untouched village
             {untouched.length === 1 ? "" : "es"}
           </p>
 
-          {/* ---- Desktop table ---- */}
-          <div className="mt-2 hidden overflow-x-auto sm:block">
-            <table className="w-full min-w-[420px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
-                  <th className="py-2 pl-2 pr-3 font-medium">S.No</th>
-                  <th className="py-2 pr-3 font-medium">Village</th>
-                  <th className="py-2 pr-3 text-right font-medium">Target</th>
-                  <th className="py-2 pr-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
+          {/* ---- [vertical slider] [village cards] ---- */}
+          <div className="mt-2 flex items-stretch gap-2 sm:gap-3">
+            {maxStart > 0 && (
+              <div className="flex w-8 shrink-0 items-center justify-center self-stretch rounded border border-border bg-muted/30 py-2">
+                <Slider
+                  orientation="vertical"
+                  inverted
+                  value={[start]}
+                  min={0}
+                  max={maxStart}
+                  step={1}
+                  onValueChange={(values) =>
+                    setPage(Math.max(0, Math.min(values[0] ?? 0, maxStart)))
+                  }
+                  aria-label="Scroll untouched villages"
+                  /* Vertical root defaults to w-auto (a 6px track) — fill the
+                     strip so the drag/touch target is finger-sized; and bump
+                     the thumb to 24px. Track taps and drags both work (Radix
+                     handles pointer-down anywhere on the slider). */
+                  className={
+                    "data-[orientation=vertical]:w-full [&_[data-slot=slider-thumb]]:size-6"
+                  }
+                />
+              </div>
+            )}
+
+            <div className="min-w-0 flex-1">
+              {/* ---- Desktop table ---- */}
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full min-w-[420px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
+                      <th className="py-2 pl-2 pr-3 font-medium">S.No</th>
+                      <th className="py-2 pr-3 font-medium">Village</th>
+                      <th className="py-2 pr-3 text-right font-medium">Target</th>
+                      <th className="py-2 pr-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((row, index) => (
+                      <tr
+                        key={row.key}
+                        className="border-b border-border/60 last:border-0 hover:bg-muted/40"
+                      >
+                        <td className="py-2.5 pl-2 pr-3 text-muted-foreground tabular-nums">
+                          {start + index + 1}
+                        </td>
+                        <td className="py-2.5 pr-3 font-medium">{row.name}</td>
+                        <td className="py-2.5 pr-3 text-right tabular-nums">
+                          {nf.format(row.target)}
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          <span className="inline-block whitespace-nowrap rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
+                            NOT STARTED
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ---- Mobile cards ---- */}
+              <div className="space-y-2 sm:hidden">
                 {visible.map((row, index) => (
-                  <tr
-                    key={row.key}
-                    className="border-b border-border/60 last:border-0 hover:bg-muted/40"
+                  <div
+                    key={`card-${row.key}`}
+                    className="rounded-md border border-border bg-background px-3 py-2.5"
                   >
-                    <td className="py-2.5 pl-2 pr-3 text-muted-foreground tabular-nums">
-                      {start + index + 1}
-                    </td>
-                    <td className="py-2.5 pr-3 font-medium">{row.name}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">
-                      {nf.format(row.target)}
-                    </td>
-                    <td className="py-2.5 pr-3">
-                      <span className="inline-block whitespace-nowrap rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 flex-wrap items-baseline gap-1.5">
+                        <span className="shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">
+                          {start + index + 1}.
+                        </span>
+                        <p className="break-words text-sm font-semibold">{row.name}</p>
+                      </div>
+                      <span className="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
                         NOT STARTED
                       </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* ---- Mobile cards ---- */}
-          <div className="mt-2 space-y-2 sm:hidden">
-            {visible.map((row, index) => (
-              <div
-                key={`card-${row.key}`}
-                className="rounded-md border border-border bg-background px-3 py-2.5"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 flex-wrap items-baseline gap-1.5">
-                    <span className="shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">
-                      {start + index + 1}.
-                    </span>
-                    <p className="break-words text-sm font-semibold">{row.name}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground tabular-nums">
+                      Target {nf.format(row.target)}
+                    </p>
                   </div>
-                  <span className="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
-                    NOT STARTED
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground tabular-nums">
-                  Target {nf.format(row.target)}
-                </p>
+                ))}
               </div>
-            ))}
-          </div>
-
-          {/* ---- Slider pagination: 10 entries per view ---- */}
-          <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:gap-3">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
-              <Slider
-                value={[safePage]}
-                min={0}
-                max={pages - 1}
-                step={1}
-                onValueChange={(values) =>
-                  setPage(Math.max(0, Math.min(values[0] ?? 0, pages - 1)))
-                }
-                aria-label="Scroll untouched villages"
-                className="min-w-0 flex-1"
-              />
             </div>
-            <p className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {rangeStart}–{rangeEnd} of {untouched.length}
-            </p>
           </div>
         </>
       )}
