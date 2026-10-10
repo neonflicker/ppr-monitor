@@ -70,7 +70,9 @@ type Row = {
 const requestRowValidator = v.object({
   sourceKey: v.string(),
   timestamp: v.string(),
+  submittedAt: v.number(),
   requestDate: v.number(),
+  fields: v.optional(v.array(v.object({ header: v.string(), value: v.string() }))),
   village: v.string(),
   normalizedVillage: v.string(),
   requestorName: v.optional(v.string()),
@@ -89,8 +91,20 @@ export const pendingRequests = query({
       .withIndex("by_status", (q) => q.eq("status", "pending"))
       .collect();
     return rows
-      .map(({ _id, requestDate, village }) => ({ _id, requestDate, village }))
-      .sort((a, b) => b.requestDate - a.requestDate);
+      .map(({ _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone, vaccinationDoneBefore, remarks, fields }) => ({
+        _id,
+        timestamp,
+        submittedAt,
+        requestDate,
+        village,
+        requestorName,
+        email,
+        phone,
+        vaccinationDoneBefore,
+        remarks,
+        fields,
+      }))
+      .sort((a, b) => b.submittedAt - a.submittedAt);
   },
 });
 
@@ -98,12 +112,18 @@ export const pendingRequests = query({
  *  columns are intentionally never included in this projection. */
 type CompletedRequestRow = {
   _id: Id<"vaccinationRequests">;
+  timestamp: string;
+  submittedAt: number;
   requestDate: number;
   village: string;
+  requestorName?: string;
+  email?: string;
+  phone?: string;
+  vaccinationDoneBefore?: string;
+  remarks?: string;
+  fields?: { header: string; value: string }[];
   completedAt?: number;
   completionSource?: string;
-  remarks?: string;
-  vaccinationDoneBefore?: string;
 };
 
 export const getCompletedRequests = internalQuery({
@@ -115,9 +135,10 @@ export const getCompletedRequests = internalQuery({
       .collect();
     return rows
       .filter((row) => row.completionSource === COMPLETION_SOURCE)
-      .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0))
-      .map(({ _id, requestDate, village, completedAt, completionSource, remarks, vaccinationDoneBefore }) => ({
-        _id, requestDate, village, completedAt, completionSource, remarks, vaccinationDoneBefore,
+      .sort((a, b) => b.submittedAt - a.submittedAt)
+      .map(({ _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone, vaccinationDoneBefore, remarks, fields, completedAt, completionSource }) => ({
+        _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone,
+        vaccinationDoneBefore, remarks, fields, completedAt, completionSource,
       }));
   },
 });

@@ -237,12 +237,18 @@ export const completedVaccinationRequests = action({
     { token },
   ): Promise<Array<{
     _id: Id<"vaccinationRequests">;
+    timestamp: string;
+    submittedAt: number;
     requestDate: number;
     village: string;
+    requestorName?: string;
+    email?: string;
+    phone?: string;
+    vaccinationDoneBefore?: string;
+    remarks?: string;
+    fields?: { header: string; value: string }[];
     completedAt?: number;
     completionSource?: string;
-    remarks?: string;
-    vaccinationDoneBefore?: string;
   }>> => {
     await requireAdmin(ctx, token);
     return await ctx.runQuery(internal.sync.getCompletedRequests, {});

@@ -402,20 +402,28 @@ function PendingVaccinationRequests() {
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border bg-card">
-          <table className="w-full min-w-[420px] text-left text-sm">
+          <table className="w-full min-w-[1440px] table-fixed text-left text-sm">
             <thead className="bg-muted/70">
               <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
-                <th className="py-2 pl-3 pr-3 font-medium">Request date</th>
-                <th className="py-2 pr-3 font-medium">Village</th>
+                <th className="w-14 py-2 pl-3 pr-3 font-medium">S/N</th>
+                {(requests[0]?.fields ?? []).map((field) => (
+                  <th key={field.header} className="w-48 whitespace-normal py-2 pr-3 font-medium">
+                    {field.header}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {requests.map((request) => (
-                <tr key={request._id} className="border-b border-border/60 last:border-0">
-                  <td className="py-2.5 pl-3 pr-3 tabular-nums">
-                    {format(request.requestDate, "d MMM yyyy")}
-                  </td>
-                  <td className="py-2.5 pr-3 font-medium">{request.village}</td>
+              {requests.map((request, index) => (
+                <tr key={request._id} className="border-b border-border/60 align-top last:border-0">
+                  <td className="py-2.5 pl-3 pr-3 tabular-nums">{index + 1}</td>
+                  {(request.fields ?? []).map((field) => (
+                    <td key={field.header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
+                      {field.header === "Timestamp"
+                        ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
+                        : field.value || "—"}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

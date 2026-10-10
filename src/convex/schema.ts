@@ -144,7 +144,9 @@ const schema = defineSchema(
     vaccinationRequests: defineTable({
       sourceKey: v.string(), // Google Forms Timestamp, stable across response edits
       timestamp: v.string(),
+      submittedAt: v.number(),
       requestDate: v.number(),
+      fields: v.optional(v.array(v.object({ header: v.string(), value: v.string() }))),
       village: v.string(),
       normalizedVillage: v.string(),
       requestorName: v.optional(v.string()),

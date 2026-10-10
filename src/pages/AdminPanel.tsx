@@ -257,32 +257,34 @@ function CompletedVaccinationRequests({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border bg-card">
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[1600px] table-fixed text-left text-sm">
             <thead className="bg-muted/70">
               <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
-                <th className="py-2 pl-3 pr-3 font-medium">Serial</th>
-                <th className="py-2 pr-3 font-medium">Request date</th>
-                <th className="py-2 pr-3 font-medium">Village</th>
-                <th className="py-2 pr-3 font-medium">Vaccination done before?</th>
-                <th className="py-2 pr-3 font-medium">Remarks</th>
-                <th className="py-2 pr-3 font-medium">Completion date</th>
-                <th className="py-2 pr-3 font-medium">Completion source</th>
+                <th className="w-14 py-2 pl-3 pr-3 font-medium">S/N</th>
+                {(requests[0]?.fields ?? []).map((field) => (
+                  <th key={field.header} className="w-48 whitespace-normal py-2 pr-3 font-medium">
+                    {field.header}
+                  </th>
+                ))}
+                <th className="w-48 py-2 pr-3 font-medium">Completion date</th>
+                <th className="w-64 py-2 pr-3 font-medium">Completion source</th>
               </tr>
             </thead>
             <tbody>
               {requests.map((request, index) => (
-                <tr key={request._id} className="border-b border-border/60 last:border-0">
+                <tr key={request._id} className="border-b border-border/60 align-top last:border-0">
                   <td className="py-2.5 pl-3 pr-3 tabular-nums">{index + 1}</td>
-                  <td className="py-2.5 pr-3 tabular-nums">
-                    {format(request.requestDate, "d MMM yyyy")}
-                  </td>
-                  <td className="py-2.5 pr-3 font-medium">{request.village}</td>
-                  <td className="py-2.5 pr-3">{request.vaccinationDoneBefore || "—"}</td>
-                  <td className="max-w-56 py-2.5 pr-3">{request.remarks || "—"}</td>
+                  {(request.fields ?? []).map((field) => (
+                    <td key={field.header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
+                      {field.header === "Timestamp"
+                        ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
+                        : field.value || "—"}
+                    </td>
+                  ))}
                   <td className="py-2.5 pr-3 tabular-nums">
                     {request.completedAt ? format(request.completedAt, "d MMM yyyy") : "—"}
                   </td>
-                  <td className="py-2.5 pr-3">{request.completionSource}</td>
+                  <td className="whitespace-normal break-words py-2.5 pr-3">{request.completionSource}</td>
                 </tr>
               ))}
             </tbody>

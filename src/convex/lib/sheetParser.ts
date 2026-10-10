@@ -365,14 +365,40 @@ const REQUEST_FIELDS = {
 export type ParsedVaccinationRequest = {
   sourceKey: string;
   timestamp: string;
+  submittedAt: number;
   requestDate: number;
-  village: string;
   requestorName?: string;
   email?: string;
   phone?: string;
+  village: string;
   vaccinationDoneBefore?: string;
   remarks?: string;
+  fields: VaccinationRequestField[];
 };
+
+export type VaccinationRequestField = {
+  header: string;
+  value: string;
+};
+
+function parseSubmissionTimestamp(raw: string, fallback: number): number {
+  const match = raw.trim().match(
+    /^(.*?)\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i,
+  );
+  if (!match) return fallback;
+  const day = parseSheetDate(match[1]);
+  if (day === null) return fallback;
+  let hour = Number(match[2]);
+  const minute = Number(match[3]);
+  const second = Number(match[4] ?? 0);
+  const meridiem = match[5]?.toUpperCase();
+  if (minute > 59 || second > 59 || hour > 23) return fallback;
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return fallback;
+    hour = (hour % 12) + (meridiem === "PM" ? 12 : 0);
+  }
+  return day + ((hour * 60 + minute) * 60 + second) * 1000;
+}
 
 export type ParsedVaccinationRequests = {
   records: ParsedVaccinationRequest[];
@@ -407,16 +433,21 @@ export function parseVaccinationRequests(csv: string): ParsedVaccinationRequests
     // Timestamp is the stable Google Forms row identity and permits edited
     // responses to update their original stored request.
     if (!timestamp || !village || requestDate === null) continue;
+    const fields: VaccinationRequestField[] = headers
+      .map((header, index) => ({ header, value: (cells[index] ?? "").trim() }))
+      .filter(({ header }) => header.length > 0);
     records.push({
       sourceKey: timestamp,
       timestamp,
+      submittedAt: parseSubmissionTimestamp(timestamp, requestDate),
       requestDate,
-      village,
       requestorName: cell("requestor") || undefined,
-      email: cell("email") || undefined,
+      email: (cell("email") || undefined) as string | undefined,
       phone: cell("phone") || undefined,
+      village,
       vaccinationDoneBefore: cell("vaccinationDoneBefore") || undefined,
       remarks: cell("remarks") || undefined,
+      fields,
     });
   }
   return { records, totalRows: Math.max(0, rows.length - 1) };
