@@ -229,6 +229,26 @@ export const logout = action({
   },
 });
 
+/** Return request history only after validating the Admin session token. */
+export const completedVaccinationRequests = action({
+  args: { token: v.string() },
+  handler: async (
+    ctx,
+    { token },
+  ): Promise<Array<{
+    _id: Id<"vaccinationRequests">;
+    requestDate: number;
+    village: string;
+    completedAt?: number;
+    completionSource?: string;
+    remarks?: string;
+    vaccinationDoneBefore?: string;
+  }>> => {
+    await requireAdmin(ctx, token);
+    return await ctx.runQuery(internal.sync.getCompletedRequests, {});
+  },
+});
+
 /** Admin-only program settings update (target, sheet URL, PPR values, …). */
 export const updateSettings = action({
   args: {
@@ -238,6 +258,8 @@ export const updateSettings = action({
     state: v.optional(v.string()),
     sheetUrl: v.optional(v.string()),
     sheetGid: v.optional(v.string()),
+    requestSheetUrl: v.optional(v.string()),
+    requestSheetGid: v.optional(v.string()),
     programmeTarget: v.optional(v.number()),
     vaccinationStartDate: v.optional(v.string()),
     pprValues: v.optional(v.array(v.string())),
@@ -256,12 +278,14 @@ export const updateSettings = action({
         throw new ConvexError("Programme target cannot be negative.");
       }
     }
-    if (args.sheetUrl !== undefined && args.sheetUrl.trim() !== "") {
-      const trimmed = args.sheetUrl.trim();
-      if (!trimmed.startsWith("https://docs.google.com/spreadsheets/")) {
-        throw new ConvexError(
-          "The sheet URL must be a docs.google.com/spreadsheets link.",
-        );
+    for (const url of [args.sheetUrl, args.requestSheetUrl]) {
+      if (url !== undefined && url.trim() !== "") {
+        const trimmed = url.trim();
+        if (!trimmed.startsWith("https://docs.google.com/spreadsheets/")) {
+          throw new ConvexError(
+            "Sheet URLs must be docs.google.com/spreadsheets links.",
+          );
+        }
       }
     }
     const { token: _token, ...patch } = args;

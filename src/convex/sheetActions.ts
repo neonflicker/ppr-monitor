@@ -9,7 +9,9 @@ import {
   buildCsvUrl,
   diffSheetRecords,
   parseSheet,
+  parseVaccinationRequests,
 } from "./lib/sheetParser";
+import { normalizeVillage } from "./lib/villageMatch";
 
 const SESSION_EXPIRED = "SESSION_EXPIRED:";
 const AUTO_SYNC_MIN_MS = 5 * 60 * 1000;
@@ -270,6 +272,25 @@ async function performSync(
       if (parsed.fatal) {
         throw new ConvexError(parsed.fatal);
       }
+      if (!parsed.completionQuestionFound) {
+        throw new ConvexError(
+          'The vaccination sheet is missing the exact "Is vaccination completed in the village?" column; requests were not changed.',
+        );
+      }
+
+      // Request response reconciliation is separate from vaccination-record
+      // diff/deletion and never contributes to achievement counts.
+      const requestCsv = await fetchCsv(
+        buildCsvUrl(settings.requestSheetUrl, settings.requestSheetGid),
+      );
+      const requestParse = parseVaccinationRequests(requestCsv);
+      if (requestParse.fatal) throw new ConvexError(requestParse.fatal);
+      const requestSyncRows = requestParse.records.map((row) => ({
+        ...row,
+        // Preserve the request as submitted, but completion matching will skip
+        // villages that normalize to an empty key.
+        normalizedVillage: normalizeVillage(row.village),
+      }));
 
       await ctx.runMutation(internal.sync.setStage, {
         syncId,
@@ -331,6 +352,15 @@ async function performSync(
           });
         }
       }
+
+      // Commit request sync only after vaccination-sheet reconciliation has
+      // completed. The request table is separate and is never part of deletes.
+      await ctx.runMutation(internal.sync.syncVaccinationRequests, {
+        rows: requestSyncRows,
+      });
+      await ctx.runMutation(internal.sync.completeRequestsForVillages, {
+        villages: parsed.completionYesVillages,
+      });
 
       const invalidReasons = diff.reasons;
 

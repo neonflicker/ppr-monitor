@@ -6,6 +6,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { normalizeVillage } from "./lib/villageMatch";
 
 const STALE_SYNC_MS = 5 * 60 * 1000;
 
@@ -66,6 +67,137 @@ type Row = {
 };
 
 /** Latest sync run (drives the progress indicator + last-updated display). */
+const requestRowValidator = v.object({
+  sourceKey: v.string(),
+  timestamp: v.string(),
+  requestDate: v.number(),
+  village: v.string(),
+  normalizedVillage: v.string(),
+  requestorName: v.optional(v.string()),
+  email: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  vaccinationDoneBefore: v.optional(v.string()),
+  remarks: v.optional(v.string()),
+});
+
+/** Public request rows omit all contact and identity details. */
+export const pendingRequests = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("vaccinationRequests")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+    return rows
+      .map(({ _id, requestDate, village }) => ({ _id, requestDate, village }))
+      .sort((a, b) => b.requestDate - a.requestDate);
+  },
+});
+
+/** Admin-only UI data is still protected by the AdminPanel route; contact
+ *  columns are intentionally never included in this projection. */
+type CompletedRequestRow = {
+  _id: Id<"vaccinationRequests">;
+  requestDate: number;
+  village: string;
+  completedAt?: number;
+  completionSource?: string;
+  remarks?: string;
+  vaccinationDoneBefore?: string;
+};
+
+export const getCompletedRequests = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<CompletedRequestRow[]> => {
+    const rows = await ctx.db
+      .query("vaccinationRequests")
+      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .collect();
+    return rows
+      .filter((row) => row.completionSource === COMPLETION_SOURCE)
+      .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0))
+      .map(({ _id, requestDate, village, completedAt, completionSource, remarks, vaccinationDoneBefore }) => ({
+        _id, requestDate, village, completedAt, completionSource, remarks, vaccinationDoneBefore,
+      }));
+  },
+});
+
+const COMPLETION_SOURCE = "Vaccination submission — village completion reported YES";
+
+/** Upsert request form responses by their stable Google Forms timestamp and
+ *  never demote an existing completion. This table is not used by statistics. */
+export const syncVaccinationRequests = internalMutation({
+  args: { rows: v.array(requestRowValidator) },
+  handler: async (ctx, { rows }) => {
+    const now = Date.now();
+    let inserted = 0;
+    let updated = 0;
+    for (const row of rows) {
+      const existing = await ctx.db
+        .query("vaccinationRequests")
+        .withIndex("by_source_key", (q) => q.eq("sourceKey", row.sourceKey))
+        .unique();
+      if (!existing) {
+        await ctx.db.insert("vaccinationRequests", {
+          ...row,
+          status: "pending",
+          updatedAt: now,
+        });
+        inserted++;
+        continue;
+      }
+      await ctx.db.patch(existing._id, {
+        ...row,
+        // Completion survives both edited source rows and later syncs.
+        status: existing.status,
+        completedAt: existing.completedAt,
+        completionSource: existing.completionSource,
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return { inserted, updated };
+  },
+});
+
+/** Complete every pending request whose normalized village matches a valid
+ *  vaccination-sheet row with YES. Repeated runs preserve the first completion
+ *  event and only affect the independent request table. */
+export const completeRequestsForVillages = internalMutation({
+  args: { villages: v.array(v.object({ village: v.string(), completedAt: v.number() })) },
+  handler: async (ctx, { villages }) => {
+    const completedAtByVillage = new Map<string, number>();
+    for (const row of villages) {
+      const normalized = normalizeVillage(row.village);
+      if (!normalized) continue;
+      completedAtByVillage.set(
+        normalized,
+        Math.max(completedAtByVillage.get(normalized) ?? 0, row.completedAt),
+      );
+    }
+    if (!completedAtByVillage.size) return { completed: 0 };
+    const pending = await ctx.db
+      .query("vaccinationRequests")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+    let completed = 0;
+    for (const request of pending) {
+      const requestVillage = normalizeVillage(request.village);
+      if (!requestVillage) continue;
+      const completedAt = completedAtByVillage.get(requestVillage);
+      if (completedAt === undefined) continue;
+      await ctx.db.patch(request._id, {
+        status: "completed",
+        completedAt,
+        completionSource: COMPLETION_SOURCE,
+        updatedAt: Date.now(),
+      });
+      completed++;
+    }
+    return { completed };
+  },
+});
+
 export const latest = query({
   args: {},
   handler: async (ctx) => {

@@ -40,6 +40,8 @@ const schema = defineSchema(
       state: v.string(),
       sheetUrl: v.string(),
       sheetGid: v.optional(v.string()),
+      requestSheetUrl: v.optional(v.string()),
+      requestSheetGid: v.optional(v.string()),
       programmeTarget: v.optional(v.number()),
       vaccinationStartDate: v.optional(v.string()),
       pprValues: v.array(v.string()),
@@ -137,6 +139,26 @@ const schema = defineSchema(
       .index("by_status", ["status"])
       .index("by_dateKey", ["dateKey"])
       .index("by_naturalKey", ["naturalKey"]),
+
+    // ---- PPR vaccination requests (kept separate from achievement records) ----
+    vaccinationRequests: defineTable({
+      sourceKey: v.string(), // Google Forms Timestamp, stable across response edits
+      timestamp: v.string(),
+      requestDate: v.number(),
+      village: v.string(),
+      normalizedVillage: v.string(),
+      requestorName: v.optional(v.string()),
+      email: v.optional(v.string()),
+      phone: v.optional(v.string()),
+      vaccinationDoneBefore: v.optional(v.string()),
+      remarks: v.optional(v.string()),
+      status: v.union(v.literal("pending"), v.literal("completed")),
+      completedAt: v.optional(v.number()),
+      completionSource: v.optional(v.string()),
+      updatedAt: v.number(),
+    })
+      .index("by_source_key", ["sourceKey"])
+      .index("by_status", ["status"]),
 
     // ---- User & village allocation (Excel/CSV import) ----
     // One row per (user, village, target) from the ACTIVE allocation file.

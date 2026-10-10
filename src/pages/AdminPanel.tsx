@@ -10,8 +10,9 @@ import { SettingsDialog } from "@/components/SettingsDialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { useAdmin } from "@/hooks/use-admin";
+import { errorMessage } from "@/lib/convex-errors";
 import { cn } from "@/lib/utils";
-import { useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { format } from "date-fns";
 import {
   Bell,
@@ -26,7 +27,7 @@ import {
   Users,
   Gauge,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 type TabId =
@@ -37,6 +38,7 @@ type TabId =
   | "history"
   | "validation"
   | "notices"
+  | "requests"
   | "settings";
 
 const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
@@ -47,11 +49,12 @@ const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
   { id: "history", label: "Import History", icon: History },
   { id: "validation", label: "Data Validation", icon: ClipboardCheck },
   { id: "notices", label: "Notice Board", icon: Bell },
+  { id: "requests", label: "Completed Requests", icon: ClipboardCheck },
   { id: "settings", label: "Programme Configuration", icon: Settings2 },
 ];
 
 export default function AdminPanel() {
-  const { state, logout } = useAdmin();
+  const { state, logout, token, expireSession } = useAdmin();
   const todayKey = format(new Date(), "yyyy-MM-dd");
   const overview = useQuery(api.stats.overview, { todayKey });
   const [tab, setTab] = useState<TabId>("status");
@@ -83,6 +86,8 @@ export default function AdminPanel() {
         return <DataValidation />;
       case "notices":
         return <NoticeManager />;
+      case "requests":
+        return <CompletedVaccinationRequests token={token} onExpired={expireSession} />;
       case "settings":
         return (
           <div className="space-y-4">
@@ -198,6 +203,93 @@ export default function AdminPanel() {
         />
       )}
     </div>
+  );
+}
+
+function CompletedVaccinationRequests({
+  token,
+  onExpired,
+}: {
+  token: string | null;
+  onExpired: () => void;
+}) {
+  const fetchRequests = useAction(api.adminAuth.completedVaccinationRequests);
+  const [requests, setRequests] = useState<Awaited<ReturnType<typeof fetchRequests>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void fetchRequests({ token }).then((result) => {
+      if (!cancelled) setRequests(result);
+    }).catch((err) => {
+      const message = errorMessage(err);
+      if (message.startsWith("SESSION_EXPIRED")) onExpired();
+      else if (!cancelled) setError(message);
+    });
+    return () => { cancelled = true; };
+  }, [token, fetchRequests, onExpired]);
+
+  if (error) {
+    return <p className="rounded border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>;
+  }
+  if (requests === null) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="size-5 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="font-title text-xl font-bold uppercase tracking-tight">
+          Completed Vaccination Requests
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Requests remain in the database history after village completion is reported.
+        </p>
+      </div>
+      {requests.length === 0 ? (
+        <p className="rounded border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+          No completed vaccination requests yet.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-border bg-card">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead className="bg-muted/70">
+              <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="py-2 pl-3 pr-3 font-medium">Serial</th>
+                <th className="py-2 pr-3 font-medium">Request date</th>
+                <th className="py-2 pr-3 font-medium">Village</th>
+                <th className="py-2 pr-3 font-medium">Vaccination done before?</th>
+                <th className="py-2 pr-3 font-medium">Remarks</th>
+                <th className="py-2 pr-3 font-medium">Completion date</th>
+                <th className="py-2 pr-3 font-medium">Completion source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.map((request, index) => (
+                <tr key={request._id} className="border-b border-border/60 last:border-0">
+                  <td className="py-2.5 pl-3 pr-3 tabular-nums">{index + 1}</td>
+                  <td className="py-2.5 pr-3 tabular-nums">
+                    {format(request.requestDate, "d MMM yyyy")}
+                  </td>
+                  <td className="py-2.5 pr-3 font-medium">{request.village}</td>
+                  <td className="py-2.5 pr-3">{request.vaccinationDoneBefore || "—"}</td>
+                  <td className="max-w-56 py-2.5 pr-3">{request.remarks || "—"}</td>
+                  <td className="py-2.5 pr-3 tabular-nums">
+                    {request.completedAt ? format(request.completedAt, "d MMM yyyy") : "—"}
+                  </td>
+                  <td className="py-2.5 pr-3">{request.completionSource}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

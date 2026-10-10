@@ -23,6 +23,8 @@ type SettingsSource = {
   state: string;
   sheetUrl: string;
   sheetGid: string;
+  requestSheetUrl: string;
+  requestSheetGid: string;
   target: number | null;
   vaccinationStartDate: string | null;
   pprValues: string[];
@@ -47,6 +49,8 @@ export function SettingsDialog({
   const [startDate, setStartDate] = useState("");
   const [sheetUrl, setSheetUrl] = useState("");
   const [sheetGid, setSheetGid] = useState("");
+  const [requestSheetUrl, setRequestSheetUrl] = useState("");
+  const [requestSheetGid, setRequestSheetGid] = useState("");
   const [pprValues, setPprValues] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +64,8 @@ export function SettingsDialog({
       setStartDate(overview.vaccinationStartDate ?? "");
       setSheetUrl(overview.sheetUrl);
       setSheetGid(overview.sheetGid);
+      setRequestSheetUrl(overview.requestSheetUrl);
+      setRequestSheetGid(overview.requestSheetGid);
       setPprValues(overview.pprValues.join(", "));
       setError(null);
     }
@@ -83,6 +89,13 @@ export function SettingsDialog({
       setError("Sheet URL must be a docs.google.com/spreadsheets link.");
       return;
     }
+    if (
+      requestSheetUrl.trim() &&
+      !requestSheetUrl.trim().startsWith("https://docs.google.com/spreadsheets/")
+    ) {
+      setError("Request sheet URL must be a docs.google.com/spreadsheets link.");
+      return;
+    }
 
     setBusy(true);
     try {
@@ -93,6 +106,8 @@ export function SettingsDialog({
         state: stateName.trim(),
         sheetUrl: sheetUrl.trim(),
         sheetGid: sheetGid.trim(),
+        requestSheetUrl: requestSheetUrl.trim(),
+        requestSheetGid: requestSheetGid.trim(),
         programmeTarget,
         vaccinationStartDate: startDate.trim(),
         pprValues: pprValues
@@ -213,6 +228,30 @@ export function SettingsDialog({
             />
             <p className="text-xs text-muted-foreground">
               The sheet must be shared as “Anyone with the link → Viewer”.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="requestSheetGid">Request response tab GID</Label>
+            <Input
+              id="requestSheetGid"
+              placeholder="e.g. 687692591"
+              value={requestSheetGid}
+              onChange={(e) => setRequestSheetGid(e.target.value)}
+              disabled={busy}
+            />
+          </div>
+
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="requestSheetUrl">Vaccination request response sheet URL</Label>
+            <Input
+              id="requestSheetUrl"
+              value={requestSheetUrl}
+              onChange={(e) => setRequestSheetUrl(e.target.value)}
+              disabled={busy}
+            />
+            <p className="text-xs text-muted-foreground">
+              Used only to sync request responses. Share as “Anyone with the link → Viewer”.
             </p>
           </div>
 

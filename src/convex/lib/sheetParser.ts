@@ -219,8 +219,8 @@ export interface ColumnMapping {
  *
  * Village handling (§Issue 1): every header mentioning "village" becomes a
  * candidate, but the PRIMARY column is chosen by header wording — an exact
- * "Village" / "Village Name" header (currently Column O) always beats a
- * question/flag column such as “Is vaccination completed in the village?”
+ * "Village" / "Village Name" header always beats a question/flag column such
+ * as “Is vaccination completed in the village?”.
  * (currently Column N). Non-winning candidates are exposed as guarded
  * per-row fallbacks and reported as unmapped.
  */
@@ -351,6 +351,77 @@ export function toCount(raw: string | undefined): number {
   return Math.max(0, Math.round(n));
 }
 
+const REQUEST_FIELDS = {
+  timestamp: "Timestamp",
+  email: "Email Address",
+  date: "Date of Application",
+  requestor: "Name of the Requestor",
+  phone: "Phone Number of the requestor",
+  village: "Village",
+  vaccinationDoneBefore: "Was Vaccination done before?",
+  remarks: "Remarks",
+} as const;
+
+export type ParsedVaccinationRequest = {
+  sourceKey: string;
+  timestamp: string;
+  requestDate: number;
+  village: string;
+  requestorName?: string;
+  email?: string;
+  phone?: string;
+  vaccinationDoneBefore?: string;
+  remarks?: string;
+};
+
+export type ParsedVaccinationRequests = {
+  records: ParsedVaccinationRequest[];
+  totalRows: number;
+  fatal?: string;
+};
+
+/** Parse only the actual Google Forms request-response headers and fields. */
+export function parseVaccinationRequests(csv: string): ParsedVaccinationRequests {
+  const rows = parseCsv(csv).filter((row) => row.some((cell) => !isBlank(cell)));
+  if (!rows.length) return { records: [], totalRows: 0, fatal: "Request response sheet is empty." };
+  const headers = rows[0].map((header) => header.trim());
+  const columns = Object.fromEntries(
+    Object.entries(REQUEST_FIELDS).map(([key, label]) => [key, headers.indexOf(label)]),
+  ) as Record<keyof typeof REQUEST_FIELDS, number>;
+  const required = ["timestamp", "date", "village"] as const;
+  const missing = required.filter((key) => columns[key] < 0).map((key) => REQUEST_FIELDS[key]);
+  if (missing.length) {
+    return {
+      records: [],
+      totalRows: Math.max(0, rows.length - 1),
+      fatal: `Request response sheet is missing required column(s): ${missing.join(", ")}.`,
+    };
+  }
+  const records: ParsedVaccinationRequest[] = [];
+  for (const cells of rows.slice(1)) {
+    const cell = (key: keyof typeof REQUEST_FIELDS) =>
+      columns[key] < 0 ? "" : (cells[columns[key]] ?? "").trim();
+    const timestamp = cell("timestamp");
+    const village = cell("village");
+    const requestDate = parseSheetDate(cell("date"));
+    // Timestamp is the stable Google Forms row identity and permits edited
+    // responses to update their original stored request.
+    if (!timestamp || !village || requestDate === null) continue;
+    records.push({
+      sourceKey: timestamp,
+      timestamp,
+      requestDate,
+      village,
+      requestorName: cell("requestor") || undefined,
+      email: cell("email") || undefined,
+      phone: cell("phone") || undefined,
+      vaccinationDoneBefore: cell("vaccinationDoneBefore") || undefined,
+      remarks: cell("remarks") || undefined,
+    });
+  }
+  return { records, totalRows: Math.max(0, rows.length - 1) };
+}
+
 export function dateKeyFromMs(ms: number): string {
   const d = new Date(ms);
   const y = d.getUTCFullYear();
@@ -421,6 +492,8 @@ export interface ParsedSheet {
   unmapped: string[];
   totalRows: number;
   records: NormalizedRow[];
+  completionYesVillages: { village: string; completedAt: number }[];
+  completionQuestionFound: boolean;
   reasons: { reason: string; count: number }[];
   fatal?: string;
 }
@@ -431,7 +504,7 @@ const get = (cells: string[], idx: number | undefined): string =>
 /**
  * Read the Village cell for one row.
  *
- * The mapped column (the exact-header Village column, currently Column O) is
+ * The mapped column (the exact-header Village column in the vaccination sheet) is
  * authoritative: whenever it has a value, that value is used. Only when it is
  * blank do we consult the guarded legacy fallbacks (other "village"-worded
  * columns, in header-rank order) — and only for values that plausibly are
@@ -466,6 +539,8 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
       unmapped: [],
       totalRows: 0,
       records: [],
+      completionYesVillages: [],
+      completionQuestionFound: false,
       reasons: [],
       fatal: "The sheet is empty — no rows were found.",
     };
@@ -496,6 +571,8 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
       unmapped,
       totalRows: Math.max(0, rows.length - 1),
       records: [],
+      completionYesVillages: [],
+      completionQuestionFound: false,
       reasons: [],
       fatal: `Could not find ${missing.join(", ")} in the sheet. Detected columns: ${seen}.`,
     };
@@ -503,6 +580,15 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
 
   const dataRows = rows.slice(1);
   const records: NormalizedRow[] = [];
+  const completionYesVillages: { village: string; completedAt: number }[] = [];
+  // Match only the exact completion question. The actual village column is
+  // still the separately resolved `mapping.village` column.
+  const completionColumn = headers.findIndex(
+    (header) => normalizeHeader(header) === "isvaccinationcompletedinthevillage",
+  );
+  const completionVillageColumn = headers.findIndex(
+    (header) => normalizeHeader(header) === "village",
+  );
   const reasonCount = new Map<string, number>();
   const bump = (reason: string) =>
     reasonCount.set(reason, (reasonCount.get(reason) ?? 0) + 1);
@@ -582,6 +668,20 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
     }
 
     records.push(base);
+    const exactCompletionVillage = get(cells, completionVillageColumn);
+    if (
+      base.status === "valid" &&
+      base.isPpr &&
+      completionColumn >= 0 &&
+      completionVillageColumn >= 0 &&
+      normalizeHeader(get(cells, completionColumn)) === "yes" &&
+      looksLikeVillage(exactCompletionVillage)
+    ) {
+      completionYesVillages.push({
+        village: exactCompletionVillage,
+        completedAt: dateMs!,
+      });
+    }
   });
 
   const reasons = [...reasonCount.entries()]
@@ -595,6 +695,8 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
     unmapped,
     totalRows: dataRows.length,
     records,
+    completionYesVillages,
+    completionQuestionFound: completionColumn >= 0 && completionVillageColumn >= 0,
     reasons,
   };
 }

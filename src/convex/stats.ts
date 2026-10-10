@@ -181,6 +181,8 @@ export const overview = query({
       vaccinationStartDate: settings.vaccinationStartDate ?? null,
       sheetUrl: settings.sheetUrl,
       sheetGid: settings.sheetGid ?? "",
+      requestSheetUrl: settings.requestSheetUrl,
+      requestSheetGid: settings.requestSheetGid,
       pprValues: settings.pprValues,
       defaultWasted: settings.defaultWasted,
       personnelDepartmental: settings.personnelDepartmental,

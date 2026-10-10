@@ -386,6 +386,46 @@ function TodayByVaccinator() {
   );
 }
 
+function PendingVaccinationRequests() {
+  const requests = useQuery(api.sync.pendingRequests, {});
+
+  return (
+    <section className="space-y-3">
+      <SectionHead title="Pending Vaccination Requests" />
+      {requests === undefined ? (
+        <div className="flex items-center justify-center py-5">
+          <Loader2 className="size-5 animate-spin text-primary" />
+        </div>
+      ) : requests.length === 0 ? (
+        <p className="rounded border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+          No pending vaccination requests at present.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-border bg-card">
+          <table className="w-full min-w-[420px] text-left text-sm">
+            <thead className="bg-muted/70">
+              <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="py-2 pl-3 pr-3 font-medium">Request date</th>
+                <th className="py-2 pr-3 font-medium">Village</th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.map((request) => (
+                <tr key={request._id} className="border-b border-border/60 last:border-0">
+                  <td className="py-2.5 pl-3 pr-3 tabular-nums">
+                    {format(request.requestDate, "d MMM yyyy")}
+                  </td>
+                  <td className="py-2.5 pr-3 font-medium">{request.village}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function VaccinatorProgressTable({ todayKey }: { todayKey: string }) {
   const data = useQuery(api.stats.vaccinatorProgress, { todayKey });
 
@@ -749,6 +789,28 @@ function DashboardView({
 
         {/* ---------------- NOTICE BOARD (public, filter-independent) ---------------- */}
         <NoticeBoard />
+
+        {/* ---------------- PPR vaccination request form ---------------- */}
+        <section className="space-y-4">
+          <div className="flex justify-center px-1">
+            <Button
+              asChild
+              size="lg"
+              className="h-12 w-full gap-2.5 rounded-md px-5 text-sm font-bold shadow-sm transition-colors hover:shadow-md sm:w-auto sm:px-7"
+            >
+              <a
+                href="https://forms.gle/9ACbCwNgCzFhayaKA"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Syringe aria-hidden="true" />
+                <span>REQUEST PPR VACCINATION</span>
+                <ArrowRight aria-hidden="true" />
+              </a>
+            </Button>
+          </div>
+          <PendingVaccinationRequests />
+        </section>
 
         {/* ---------------- Public vaccination report form ---------------- */}
         <div className="my-4 flex justify-center px-1">

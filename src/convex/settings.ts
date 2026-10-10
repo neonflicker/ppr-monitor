@@ -16,6 +16,9 @@ export const DEFAULT_SETTINGS = {
   state: "ASSAM",
   sheetUrl: DEFAULT_SHEET_URL,
   sheetGid: "",
+  requestSheetUrl:
+    "https://docs.google.com/spreadsheets/d/10-qrQ6wQ7X8kvVs-Y2iIdhxtQM4flxeRJ-lYaiiuH9c/edit?usp=sharing",
+  requestSheetGid: "687692591",
   pprValues: ["PPR", "PPR Vaccine", "PPRV", "PPR Vaccination"],
 };
 
@@ -41,6 +44,8 @@ export type Settings = {
   state: string;
   sheetUrl: string;
   sheetGid?: string;
+  requestSheetUrl: string;
+  requestSheetGid: string;
   programmeTarget?: number;
   vaccinationStartDate?: string;
   pprValues: string[];
@@ -63,6 +68,8 @@ export async function readSettingsDoc(ctx: QueryCtx): Promise<Settings> {
       state: DEFAULT_SETTINGS.state,
       sheetUrl: DEFAULT_SETTINGS.sheetUrl,
       sheetGid: DEFAULT_SETTINGS.sheetGid,
+      requestSheetUrl: DEFAULT_SETTINGS.requestSheetUrl,
+      requestSheetGid: DEFAULT_SETTINGS.requestSheetGid,
       pprValues: [...DEFAULT_SETTINGS.pprValues],
       personnelDepartmental: [...DEFAULT_PERSONNEL.departmental],
       personnelSemiGovernment: [...DEFAULT_PERSONNEL.semiGovernment],
@@ -78,6 +85,8 @@ export async function readSettingsDoc(ctx: QueryCtx): Promise<Settings> {
     state: doc.state,
     sheetUrl: doc.sheetUrl,
     sheetGid: doc.sheetGid,
+    requestSheetUrl: doc.requestSheetUrl ?? DEFAULT_SETTINGS.requestSheetUrl,
+    requestSheetGid: doc.requestSheetGid ?? DEFAULT_SETTINGS.requestSheetGid,
     programmeTarget: doc.programmeTarget,
     vaccinationStartDate: doc.vaccinationStartDate,
     pprValues: doc.pprValues,
@@ -125,6 +134,8 @@ const patchArgs = {
   state: v.optional(v.string()),
   sheetUrl: v.optional(v.string()),
   sheetGid: v.optional(v.string()),
+  requestSheetUrl: v.optional(v.string()),
+  requestSheetGid: v.optional(v.string()),
   programmeTarget: v.optional(v.number()),
   vaccinationStartDate: v.optional(v.string()),
   pprValues: v.optional(v.array(v.string())),
@@ -149,6 +160,10 @@ function buildPatch(args: Partial<Record<keyof typeof patchArgs, unknown>>) {
       (args.sheetUrl as string).trim() || DEFAULT_SETTINGS.sheetUrl;
   if (args.sheetGid !== undefined)
     patch.sheetGid = (args.sheetGid as string).trim();
+  if (args.requestSheetUrl !== undefined)
+    patch.requestSheetUrl = (args.requestSheetUrl as string).trim() || DEFAULT_SETTINGS.requestSheetUrl;
+  if (args.requestSheetGid !== undefined)
+    patch.requestSheetGid = (args.requestSheetGid as string).trim();
   if (args.programmeTarget !== undefined) {
     const target = args.programmeTarget as number;
     patch.programmeTarget =
@@ -215,6 +230,10 @@ export const apply = internalMutation({
         (patch.sheetUrl as string | undefined) ?? DEFAULT_SETTINGS.sheetUrl,
       sheetGid:
         (patch.sheetGid as string | undefined) ?? DEFAULT_SETTINGS.sheetGid,
+      requestSheetUrl:
+        (patch.requestSheetUrl as string | undefined) ?? DEFAULT_SETTINGS.requestSheetUrl,
+      requestSheetGid:
+        (patch.requestSheetGid as string | undefined) ?? DEFAULT_SETTINGS.requestSheetGid,
       programmeTarget: patch.programmeTarget as number | undefined,
       vaccinationStartDate: patch.vaccinationStartDate as string | undefined,
       pprValues:
