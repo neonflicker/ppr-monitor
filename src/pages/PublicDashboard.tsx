@@ -696,6 +696,7 @@ function DashboardView({
 
   return (
     <div className="min-h-screen">
+      <div className="sticky top-0 z-40 bg-background">
       {/* ---------------- Header ---------------- */}
       <header className="border-b border-border bg-background">
         <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-5">
@@ -770,7 +771,7 @@ function DashboardView({
       </header>
 
       {/* ---------------- Sticky navigation ---------------- */}
-      <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
+      <nav className="border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center gap-1 overflow-x-auto px-2 py-1.5 sm:px-6">
           {NAV.map((item) => (
             <button
@@ -790,6 +791,7 @@ function DashboardView({
           </Link>
         </div>
       </nav>
+      </div>
 
       <main className="mx-auto w-full max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
         {/* ---------------- USER / ALLOTTED VILLAGE scope filter ---------------- */}
