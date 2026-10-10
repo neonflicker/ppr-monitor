@@ -388,6 +388,13 @@ function TodayByVaccinator() {
 
 function PendingVaccinationRequests() {
   const requests = useQuery(api.sync.pendingRequests, {});
+  const requestFields = [
+    ...new Set(
+      requests?.flatMap((request) =>
+        (request.fields ?? []).map((field) => field.header),
+      ) ?? [],
+    ),
+  ];
 
   return (
     <section className="space-y-3">
@@ -406,9 +413,9 @@ function PendingVaccinationRequests() {
             <thead className="bg-muted/70">
               <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="w-14 py-2 pl-3 pr-3 font-medium">S/N</th>
-                {(requests[0]?.fields ?? []).map((field) => (
-                  <th key={field.header} className="w-48 whitespace-normal py-2 pr-3 font-medium">
-                    {field.header}
+                {requestFields.map((header) => (
+                  <th key={header} className="w-48 whitespace-normal py-2 pr-3 font-medium">
+                    {header}
                   </th>
                 ))}
               </tr>
@@ -417,13 +424,16 @@ function PendingVaccinationRequests() {
               {requests.map((request, index) => (
                 <tr key={request._id} className="border-b border-border/60 align-top last:border-0">
                   <td className="py-2.5 pl-3 pr-3 tabular-nums">{index + 1}</td>
-                  {(request.fields ?? []).map((field) => (
-                    <td key={field.header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
-                      {field.header === "Timestamp"
-                        ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
-                        : field.value || "—"}
-                    </td>
-                  ))}
+                  {requestFields.map((header) => {
+                    const value = (request.fields ?? []).find((field) => field.header === header)?.value;
+                    return (
+                      <td key={header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
+                        {header === "Timestamp"
+                          ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
+                          : value || "—"}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
