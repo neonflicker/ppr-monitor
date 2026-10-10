@@ -389,11 +389,14 @@ function TodayByVaccinator() {
 function PendingVaccinationRequests() {
   const requests = useQuery(api.sync.pendingRequests, {});
   const requestFields = [
-    ...new Set(
-      requests?.flatMap((request) =>
-        (request.fields ?? []).map((field) => field.header),
-      ) ?? [],
-    ),
+    ...new Set([
+      ...(requests?.flatMap((request) =>
+        (request.fields ?? [])
+          .map((field) => field.header)
+          .filter((header) => header !== "Email Address"),
+      ) ?? []),
+      "Doses of Vaccine required?",
+    ]),
   ];
 
   return (
