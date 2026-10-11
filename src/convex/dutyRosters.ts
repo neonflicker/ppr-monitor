@@ -18,29 +18,43 @@ async function requireRosterAdmin(ctx: ActionCtx, token: string): Promise<{ user
 }
 
 export const createUploadUrl = action({
-  args: { token: v.string() },
-  handler: async (ctx, { token }): Promise<string> => { await requireRosterAdmin(ctx, token); return await ctx.storage.generateUploadUrl(); },
+  args: { token: v.string(), sourceHash: v.optional(v.string()) },
+  handler: async (ctx, { token, sourceHash }): Promise<string> => {
+    await requireRosterAdmin(ctx, token);
+    if (sourceHash && await ctx.runQuery(internal.rosters.findBySourceHash, { sourceHash })) throw new ConvexError("This exact workbook has already been imported. Review its existing roster entry instead.");
+    return await ctx.storage.generateUploadUrl();
+  },
 });
 
 export const createDraft = action({
-  args: { token: v.string(), storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), entries: v.optional(v.array(entryValidator)) },
+  args: { token: v.string(), storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), entries: v.optional(v.array(entryValidator)), sourceHash: v.optional(v.string()), importIssues: v.optional(v.array(v.string())) },
   handler:  async (ctx, args): Promise<{ rosterId: Id<"rosters">; storageUrl: string }> => {
     const admin = await requireRosterAdmin(ctx, args.token);
-    if (!args.fileName.toLowerCase().endsWith(".pdf")) throw new ConvexError("Upload must be a PDF.");
+    const extension = args.fileName.toLowerCase().split(".").pop();
+    if (!extension || !["pdf", "xlsx", "xls"].includes(extension)) throw new ConvexError("Upload must be a PDF, .xlsx, or .xls file.");
+    if (args.sourceHash && await ctx.runQuery(internal.rosters.findBySourceHash, { sourceHash: args.sourceHash })) throw new ConvexError("This exact workbook has already been imported. Review its existing roster entry instead.");
     if (!datePattern.test(args.effectiveStart) || !datePattern.test(args.effectiveEnd) || args.effectiveStart > args.effectiveEnd) throw new ConvexError("Select a valid effective date range.");
     for (const entry of args.entries ?? []) {
-      if (!datePattern.test(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd) throw new ConvexError("Extracted assignment has a date outside the effective range.");
+      if (entry.date && (!datePattern.test(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd)) throw new ConvexError("Extracted assignment has a date outside the effective range.");
+    }
+    const expected = new Set<string>();
+    const cursor = new Date(`${args.effectiveStart}T12:00:00Z`);
+    const last = new Date(`${args.effectiveEnd}T12:00:00Z`);
+    while (cursor <= last && expected.size < 371) { expected.add(cursor.toISOString().slice(0, 10)); cursor.setUTCDate(cursor.getUTCDate() + 1); }
+    if (expected.size > 370) throw new ConvexError("Effective roster period must contain 1–370 calendar days.");
+    if (args.sourceHash && (args.entries ?? []).length) {
+      for (const date of expected) if (!(args.entries ?? []).some((entry) => entry.date === date)) throw new ConvexError(`Missing daily review row for ${date}.`);
     }
     const storageUrl = await ctx.storage.getUrl(args.storageId);
-    if (!storageUrl) throw new ConvexError("Uploaded PDF could not be found.");
-    const rosterId: Id<"rosters"> = await ctx.runMutation(internal.rosters.insertDraft, { storageId: args.storageId, fileName: args.fileName, effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, uploadedBy: admin.username, entries: args.entries ?? [] });
+    if (!storageUrl) throw new ConvexError("Uploaded roster file could not be found.");
+    const rosterId: Id<"rosters"> = await ctx.runMutation(internal.rosters.insertDraft, { storageId: args.storageId, fileName: args.fileName, effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, uploadedBy: admin.username, sourceHash: args.sourceHash, importIssues: args.importIssues, entries: args.entries ?? [] });
     return { rosterId, storageUrl };
   },
 });
 
 export const list = action({
   args: { token: v.string() },
-  handler: async (ctx, { token }): Promise<Array<Doc<"rosters"> & { pdfUrl: string | null }>> => { await requireRosterAdmin(ctx, token); return await ctx.runQuery(internal.rosters.adminList, {}); },
+  handler: async (ctx, { token }): Promise<Array<Doc<"rosters"> & { originalUrl: string | null }>> => { await requireRosterAdmin(ctx, token); return await ctx.runQuery(internal.rosters.adminList, {}); },
 });
 
 export const personnel = action({

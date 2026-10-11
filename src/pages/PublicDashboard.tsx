@@ -410,7 +410,7 @@ function TodayDutyRoster() {
           <div className="rounded-md border border-border bg-muted/30 p-3"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</p><p className="font-semibold">{prettyDate(date)}</p></div>
           <div className="rounded-md border border-border bg-muted/30 p-3"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Office / dispensary duty</p><p className="font-semibold">{entry.officeStaff}</p></div>
           <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-3"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Vaccination / field duty · {entry.fieldStaff.length} staff</p><div className="mt-2 flex flex-wrap gap-2">{entry.fieldStaff.map((person) => <span key={person} className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-sm font-medium">{person}</span>)}</div></div>
-          {roster?.pdfUrl && <a href={roster.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary underline sm:col-span-3">View / Download complete roster PDF · {roster.fileName}</a>}
+          {roster?.originalUrl && <a href={roster.originalUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary underline sm:col-span-3">View / Download complete roster · {roster.fileName}</a>}
         </div>
       )}
     </section>
@@ -751,7 +751,7 @@ function DashboardView({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 size="sm"
                 onClick={() => void onRefresh(false)}
@@ -766,6 +766,13 @@ function DashboardView({
                 <span className="hidden sm:inline">
                   {refreshing ? "Refreshing…" : "Refresh"}
                 </span>
+              </Button>
+              <Button size="sm" asChild className="bg-[#1877F2] text-white hover:bg-[#166FE5]">
+                <a href="https://www.facebook.com/share/1KnnyG6cW2/" target="_blank" rel="noopener noreferrer" aria-label="Follow Us on Facebook">
+                  <span aria-hidden="true" className="flex size-4 items-center justify-center rounded-full bg-white font-bold text-[#1877F2]">f</span>
+                  <span className="hidden sm:inline">Follow Us on Facebook</span>
+                  <span className="sm:hidden">Facebook</span>
+                </a>
               </Button>
               <Button size="sm" variant="outline" asChild>
                 <Link to="/auth">

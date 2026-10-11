@@ -345,11 +345,13 @@ const schema = defineSchema(
       status: v.union(v.literal("draft"), v.literal("published"), v.literal("archived")),
       uploadedAt: v.number(),
       uploadedBy: v.string(),
+      sourceHash: v.optional(v.string()),
+      importIssues: v.optional(v.array(v.string())),
       publishedAt: v.optional(v.number()),
       publishedBy: v.optional(v.string()),
       archivedAt: v.optional(v.number()),
       archivedBy: v.optional(v.string()),
-    }).index("by_status", ["status"]),
+    }).index("by_status", ["status"]).index("by_source_hash", ["sourceHash"]),
 
     // Public NOTICE BOARD (independent feature — no relation to the
     // vaccination records, Google Sheet sync, or allocation pipeline).

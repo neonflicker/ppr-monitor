@@ -3,16 +3,27 @@ import { internalMutation, internalQuery, query } from "./_generated/server";
 
 const entryValidator = v.object({ date: v.string(), officeStaff: v.string(), fieldStaff: v.array(v.string()) });
 
+export const findBySourceHash = internalQuery({
+  args: { sourceHash: v.string() },
+  handler: async (ctx, { sourceHash }) => await ctx.db.query("rosters").withIndex("by_source_hash", (q) => q.eq("sourceHash", sourceHash)).first(),
+});
+
 export const insertDraft = internalMutation({
-  args: { storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), uploadedBy: v.string(), entries: v.optional(v.array(entryValidator)) },
-  handler: async (ctx, args) => ctx.db.insert("rosters", { ...args, entries: args.entries ?? [], status: "draft", uploadedAt: Date.now() }),
+  args: { storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), uploadedBy: v.string(), sourceHash: v.optional(v.string()), importIssues: v.optional(v.array(v.string())), entries: v.optional(v.array(entryValidator)) },
+  handler: async (ctx, args) => {
+    if (args.sourceHash) {
+      const duplicate = await ctx.db.query("rosters").withIndex("by_source_hash", (q) => q.eq("sourceHash", args.sourceHash!)).first();
+      if (duplicate) throw new ConvexError("This exact workbook has already been imported. Review its existing roster entry instead.");
+    }
+    return await ctx.db.insert("rosters", { ...args, entries: args.entries ?? [], status: "draft", uploadedAt: Date.now() });
+  },
 });
 
 export const adminList = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("rosters").collect();
-    return await Promise.all(rows.sort((a, b) => b.uploadedAt - a.uploadedAt).map(async (row) => ({ ...row, pdfUrl: await ctx.storage.getUrl(row.storageId) })));
+    return await Promise.all(rows.sort((a, b) => b.uploadedAt - a.uploadedAt).map(async (row) => ({ ...row, originalUrl: await ctx.storage.getUrl(row.storageId) })));
   },
 });
 
@@ -78,7 +89,7 @@ export const publicToday = query({
   handler: async (ctx, { date }) => {
     const row = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect()).find((item) => item.effectiveStart <= date && item.effectiveEnd >= date);
     if (!row) return null;
-    return { rosterId: row._id, fileName: row.fileName, date, entry: row.entries.find((entry) => entry.date === date) ?? null, pdfUrl: await ctx.storage.getUrl(row.storageId) };
+    return { rosterId: row._id, fileName: row.fileName, date, entry: row.entries.find((entry) => entry.date === date) ?? null, originalUrl: await ctx.storage.getUrl(row.storageId) };
   },
 });
 
@@ -92,12 +103,12 @@ export const publicPublished = query({
       effectiveStart: row.effectiveStart,
       effectiveEnd: row.effectiveEnd,
       entries: row.entries,
-      pdfUrl: await ctx.storage.getUrl(row.storageId),
+      originalUrl: await ctx.storage.getUrl(row.storageId),
     })));
   },
 });
 
 export const publicRoster = query({
   args: { rosterId: v.id("rosters") },
-  handler: async (ctx, { rosterId }) => { const row = await ctx.db.get(rosterId); if (!row || row.status !== "published") return null; return { rosterId: row._id, fileName: row.fileName, effectiveStart: row.effectiveStart, effectiveEnd: row.effectiveEnd, entries: row.entries, pdfUrl: await ctx.storage.getUrl(row.storageId) }; },
+  handler: async (ctx, { rosterId }) => { const row = await ctx.db.get(rosterId); if (!row || row.status !== "published") return null; return { rosterId: row._id, fileName: row.fileName, effectiveStart: row.effectiveStart, effectiveEnd: row.effectiveEnd, entries: row.entries, originalUrl: await ctx.storage.getUrl(row.storageId) }; },
 });
