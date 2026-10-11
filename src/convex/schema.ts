@@ -351,7 +351,8 @@ const schema = defineSchema(
       publishedBy: v.optional(v.string()),
       archivedAt: v.optional(v.number()),
       archivedBy: v.optional(v.string()),
-    }).index("by_status", ["status"]).index("by_source_hash", ["sourceHash"]),
+    }).index("by_status", ["status"]).index("by_source_hash", ["sourceHash"]).index("by_storage_id", ["storageId"]),
+
 
     // Public NOTICE BOARD (independent feature — no relation to the
     // vaccination records, Google Sheet sync, or allocation pipeline).

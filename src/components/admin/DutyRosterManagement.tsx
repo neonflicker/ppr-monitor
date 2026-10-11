@@ -1,3 +1,4 @@
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
@@ -8,7 +9,7 @@ import { parseDutyRosterWorksheet } from "@/lib/dutyRosterExcelParser";
 import { errorMessage } from "@/lib/convex-errors";
 import { useAction } from "convex/react";
 import { format } from "date-fns";
-import { Archive, FileSpreadsheet, FileText, Loader2, UploadCloud } from "lucide-react";
+import { Archive, FileSpreadsheet, FileText, Loader2, Trash2, UploadCloud } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -65,7 +66,10 @@ export default function DutyRosterManagement() {
   const personnelAction = useAction(api.dutyRosters.personnel);
   const publishAction = useAction(api.dutyRosters.publish);
   const archiveAction = useAction(api.dutyRosters.archive);
+  const removeRosterAction = useAction(api.dutyRosters.remove);
   const [rows, setRows] = useState<Roster[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<Roster | null>(null);
+  const [deletingId, setDeletingId] = useState<Id<"rosters"> | null>(null);
   const [staff, setStaff] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [excelPreviewUrl, setExcelPreviewUrl] = useState<string | null>(null);
@@ -254,6 +258,27 @@ export default function DutyRosterManagement() {
     try { await archiveAction({ token, rosterId }); await refresh(); toast.success("Roster archived."); }
     catch (error) { const message = errorMessage(error); if (message.startsWith("SESSION_EXPIRED")) expireSession(); toast.error(message); }
   };
+  const deleteRoster = async () => {
+    if (!token || !deleteTarget || deletingId) return;
+    const target = deleteTarget;
+    setDeletingId(target._id);
+    try {
+      await removeRosterAction({ token, rosterId: target._id });
+      setRows((current) => current.filter((row) => row._id !== target._id));
+      if (selectedId === target._id) {
+        setSelectedId(null);
+        setEntries([]);
+        setPreviewUrl(null);
+        setImportIssues([]);
+      }
+      setDeleteTarget(null);
+      toast.success(`Deleted roster “${target.fileName}”.`);
+    } catch (error) {
+      const message = errorMessage(error);
+      if (message.startsWith("SESSION_EXPIRED")) expireSession();
+      toast.error("Could not delete roster", { description: message });
+    } finally { setDeletingId(null); }
+  };
 
   return (
     <section className="space-y-5">
@@ -296,7 +321,30 @@ export default function DutyRosterManagement() {
         {workbook && !selected && <Button onClick={() => void uploadExcel()} disabled={busy || !parsedSheetName}>{busy ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}Save Excel draft for review</Button>}
         {selected?.status === "draft" && <Button onClick={() => void publish()} disabled={busy || !entries.length || !staff.length || entries.some((entry) => assignmentErrors(entry, staff, entries, start, end).length > 0) || (publishedOverlaps.length > 0 && !replaceId)}>{busy ? <Loader2 className="size-4 animate-spin" /> : null}Publish / replace reviewed roster</Button>}
       </div>}
-      <div className="overflow-x-auto rounded-md border border-border bg-card"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/70"><tr><th className="p-3">Roster</th><th className="p-3">Effective period</th><th className="p-3">Status</th><th className="p-3">Uploaded / published</th><th className="p-3">Controls</th></tr></thead><tbody>{rows.map((row) => <tr key={row._id} className="border-t border-border"><td className="p-3">{row.fileName}</td><td className="p-3">{row.effectiveStart} – {row.effectiveEnd}</td><td className="p-3 capitalize">{row.status}</td><td className="p-3">{format(row.publishedAt ?? row.uploadedAt, "d MMM yyyy, hh:mm a")}</td><td className="space-x-2 p-3">{row.originalUrl && <a href={row.originalUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline">View original file</a>}{row.status === "draft" && <Button size="sm" variant="outline" onClick={() => openDraft(row)}>Review</Button>}{row.status === "published" && <Button size="sm" variant="outline" onClick={() => void archive(row._id)}><Archive className="size-3" />Archive</Button>}</td></tr>)}</tbody></table>{rows.length === 0 && <p className="p-5 text-center text-sm text-muted-foreground">No rosters uploaded yet.</p>}</div>
+      <div className="overflow-x-auto rounded-md border border-border bg-card"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/70"><tr><th className="p-3">Roster</th><th className="p-3">Effective period</th><th className="p-3">Status</th><th className="p-3">Uploaded / published</th><th className="p-3">Controls</th></tr></thead><tbody>{rows.map((row) => <tr key={row._id} className="border-t border-border"><td className="p-3">{row.fileName}</td><td className="p-3">{row.effectiveStart} – {row.effectiveEnd}</td><td className="p-3 capitalize">{row.status}</td><td className="p-3">{format(row.publishedAt ?? row.uploadedAt, "d MMM yyyy, hh:mm a")}</td><td className="space-x-2 p-3">{row.originalUrl && <a href={row.originalUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline">View original file</a>}{row.status === "draft" && <Button size="sm" variant="outline" onClick={() => openDraft(row)}>Review</Button>}{row.status === "published" && <Button size="sm" variant="outline" onClick={() => void archive(row._id)}><Archive className="size-3" />Archive</Button>}<Button size="sm" variant="destructive" onClick={() => setDeleteTarget(row)} disabled={deletingId === row._id}><Trash2 className="size-3" />Delete</Button></td></tr>)}</tbody></table>{rows.length === 0 && <p className="p-5 text-center text-sm text-muted-foreground">No rosters uploaded yet.</p>}      </div>
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deletingId) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete uploaded roster?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p><span className="font-medium text-foreground">Filename:</span> {deleteTarget?.fileName}</p>
+                <p><span className="font-medium text-foreground">Effective period:</span> {deleteTarget?.effectiveStart} – {deleteTarget?.effectiveEnd}</p>
+                <p><span className="font-medium text-foreground">Current status:</span> <span className="capitalize">{deleteTarget?.status}</span></p>
+                {deleteTarget?.status === "published" && <p className="font-medium text-destructive">Warning: deleting a published roster will remove it from the public dashboard immediately.</p>}
+                <p>This permanently deletes this roster and its reviewed assignments. Other rosters and vaccination/personnel data are not affected.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingId !== null}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={(event) => { event.preventDefault(); void deleteRoster(); }} disabled={deletingId !== null} className="bg-destructive text-white hover:bg-destructive/90">
+              {deletingId ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              {deletingId ? "Deleting…" : "Delete roster"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

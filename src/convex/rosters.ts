@@ -84,6 +84,34 @@ export const archiveInternal = internalMutation({
   handler: async (ctx, { rosterId, archivedBy }) => { const row = await ctx.db.get(rosterId); if (!row) throw new ConvexError("Roster not found."); await ctx.db.patch(rosterId, { status: "archived", archivedAt: Date.now(), archivedBy }); },
 });
 
+export const deleteRosterInternal = internalMutation({
+  args: { rosterId: v.id("rosters"), deletedBy: v.string() },
+  handler: async (ctx, { rosterId, deletedBy }) => {
+    const roster = await ctx.db.get(rosterId);
+    if (!roster) throw new ConvexError("This roster was already deleted or no longer exists.");
+
+    const deletedAt = Date.now();
+    await ctx.db.delete(rosterId);
+
+    // Keep the original file if any other roster or legacy target version references it.
+    const [rosterReferences, targetVersions] = await Promise.all([
+      ctx.db.query("rosters").withIndex("by_storage_id", (q) => q.eq("storageId", roster.storageId)).collect(),
+      ctx.db.query("targetVersions").collect(),
+    ]);
+    const isShared = rosterReferences.length > 0 || targetVersions.some((version) => version.storageId === roster.storageId);
+    if (!isShared) await ctx.storage.delete(roster.storageId);
+
+    await ctx.db.insert("auditLog", {
+      action: "duty_roster_deleted",
+      summary: `Deleted duty roster ${roster.fileName} (${roster.effectiveStart} to ${roster.effectiveEnd}, ${roster.status})`,
+      details: JSON.stringify({ rosterId, fileName: roster.fileName, effectiveStart: roster.effectiveStart, effectiveEnd: roster.effectiveEnd, status: roster.status, deletedAt }),
+      at: deletedAt,
+      by: deletedBy,
+    });
+    return { fileName: roster.fileName, effectiveStart: roster.effectiveStart, effectiveEnd: roster.effectiveEnd, status: roster.status, deletedAt };
+  },
+});
+
 export const publicToday = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {

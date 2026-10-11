@@ -95,3 +95,12 @@ export const archive = action({
   args: { token: v.string(), rosterId: v.id("rosters") },
   handler: async (ctx, args): Promise<{ ok: boolean }> => { const admin = await requireRosterAdmin(ctx, args.token); await ctx.runMutation(internal.rosters.archiveInternal, { rosterId: args.rosterId, archivedBy: admin.username }); return { ok: true }; },
 });
+
+export const remove = action({
+  args: { token: v.string(), rosterId: v.id("rosters") },
+  handler: async (ctx, args): Promise<{ ok: boolean }> => {
+    const admin = await requireRosterAdmin(ctx, args.token);
+    await ctx.runMutation(internal.rosters.deleteRosterInternal, { rosterId: args.rosterId, deletedBy: admin.username });
+    return { ok: true };
+  },
+});
