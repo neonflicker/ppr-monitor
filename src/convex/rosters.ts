@@ -79,6 +79,71 @@ export const publishInternal = internalMutation({
   },
 });
 
+export const forcePublishInternal = internalMutation({
+  args: {
+    rosterId: v.id("rosters"),
+    confirmedReplaceIds: v.array(v.id("rosters")),
+    publishedBy: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const roster = await ctx.db.get(args.rosterId);
+    if (!roster) throw new ConvexError("The selected roster no longer exists.");
+    if (roster.status === "published") {
+      return {
+        fileName: roster.fileName,
+        effectiveStart: roster.effectiveStart,
+        effectiveEnd: roster.effectiveEnd,
+        dateCount: new Set(roster.entries.map((entry) => entry.date)).size,
+        superseded: [],
+        alreadyPublished: true,
+      };
+    }
+    if (roster.status !== "draft") throw new ConvexError("Only a draft roster can be force-published.");
+    if (!roster.entries.length) throw new ConvexError("This draft has no imported daily assignments to publish.");
+
+    // Keep only structural checks needed for public date lookup. Names and field
+    // assignment counts are deliberately not normalized or matched to personnel.
+    const seenDates = new Set<string>();
+    for (const entry of roster.entries) {
+      const parsedDate = new Date(`${entry.date}T12:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== entry.date) {
+        throw new ConvexError(`Cannot publish invalid assignment date “${entry.date}”.`);
+      }
+      if (entry.date < roster.effectiveStart || entry.date > roster.effectiveEnd) {
+        throw new ConvexError(`Assignment date ${entry.date} is outside the effective period ${roster.effectiveStart} to ${roster.effectiveEnd}.`);
+      }
+      if (seenDates.has(entry.date)) throw new ConvexError(`Cannot publish duplicate assignment date ${entry.date}; resolve the source row ambiguity first.`);
+      seenDates.add(entry.date);
+    }
+
+    const overlaps = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect())
+      .filter((row) => row.effectiveStart <= roster.effectiveEnd && row.effectiveEnd >= roster.effectiveStart)
+      .sort((a, b) => a._id.localeCompare(b._id));
+    const confirmed = [...args.confirmedReplaceIds].sort((a, b) => a.localeCompare(b));
+    if (overlaps.length !== confirmed.length || overlaps.some((row, index) => row._id !== confirmed[index])) {
+      throw new ConvexError("Published rosters covering this period changed. Review the overlaps and confirm publication again.");
+    }
+
+    const publishedAt = Date.now();
+    await ctx.db.patch(roster._id, { status: "published", publishedAt, publishedBy: args.publishedBy });
+    await ctx.db.insert("auditLog", {
+      action: "duty_roster_force_published",
+      summary: `Force-published duty roster ${roster.fileName} (${seenDates.size} dates, ${roster.effectiveStart} to ${roster.effectiveEnd})${overlaps.length ? `; superseded overlapping coverage from ${overlaps.map((row) => row.fileName).join(", ")}` : ""}`,
+      details: JSON.stringify({ rosterId: roster._id, fileName: roster.fileName, effectiveStart: roster.effectiveStart, effectiveEnd: roster.effectiveEnd, publishedAt, publishedBy: args.publishedBy, dates: [...seenDates], superseded: overlaps.map((row) => ({ rosterId: row._id, fileName: row.fileName, effectiveStart: row.effectiveStart, effectiveEnd: row.effectiveEnd })) }),
+      at: publishedAt,
+      by: args.publishedBy,
+    });
+    return {
+      fileName: roster.fileName,
+      effectiveStart: roster.effectiveStart,
+      effectiveEnd: roster.effectiveEnd,
+      dateCount: seenDates.size,
+      superseded: overlaps.map(({ _id, fileName, effectiveStart, effectiveEnd }) => ({ rosterId: _id, fileName, effectiveStart, effectiveEnd })),
+      alreadyPublished: false,
+    };
+  },
+});
+
 export const archiveInternal = internalMutation({
   args: { rosterId: v.id("rosters"), archivedBy: v.string() },
   handler: async (ctx, { rosterId, archivedBy }) => { const row = await ctx.db.get(rosterId); if (!row) throw new ConvexError("Roster not found."); await ctx.db.patch(rosterId, { status: "archived", archivedAt: Date.now(), archivedBy }); },
@@ -115,7 +180,9 @@ export const deleteRosterInternal = internalMutation({
 export const publicToday = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
-    const row = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect()).find((item) => item.effectiveStart <= date && item.effectiveEnd >= date);
+    const row = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect())
+      .filter((item) => item.effectiveStart <= date && item.effectiveEnd >= date && item.entries.some((entry) => entry.date === date))
+      .sort((a, b) => (b.publishedAt ?? b._creationTime) - (a.publishedAt ?? a._creationTime))[0];
     if (!row) return null;
     return { rosterId: row._id, fileName: row.fileName, date, entry: row.entries.find((entry) => entry.date === date) ?? null, originalUrl: await ctx.storage.getUrl(row.storageId) };
   },
@@ -124,7 +191,8 @@ export const publicToday = query({
 export const publicPublished = query({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect();
+    const rows = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect())
+      .sort((a, b) => (b.publishedAt ?? b._creationTime) - (a.publishedAt ?? a._creationTime));
     return await Promise.all(rows.map(async (row) => ({
       rosterId: row._id,
       fileName: row.fileName,

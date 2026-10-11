@@ -57,9 +57,11 @@ function namesInCell(value: unknown, activeStaff: string[], issues: string[], ro
   if (!raw) return [];
   const active = new Map(activeStaff.map((name) => [normalizeName(name), name]));
   return raw.split(/[,;\n]|\s+(?:and|&)\s+/i).map((candidate) => candidate.trim().replace(/^[-•\s]+|[-•\s]+$/g, "")).filter(Boolean).map((candidate) => {
-    const known = active.get(normalizeName(candidate));
-    if (known) return known;
-    issues.push(`Worksheet row ${rowNumber}: unrecognized ${duty} staff name “${candidate}”.`);
+    if (!active.has(normalizeName(candidate))) {
+      issues.push(`Worksheet row ${rowNumber}: unrecognized ${duty} staff name “${candidate}”.`);
+    }
+    // The workbook spelling is the assignment source of truth. Keep it even
+    // when it matches an official personnel name only through normalization.
     return candidate;
   });
 }

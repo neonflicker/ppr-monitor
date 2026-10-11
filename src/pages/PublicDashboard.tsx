@@ -392,7 +392,7 @@ function TodayDutyRoster() {
   const availableDates = [...new Set(published?.flatMap((roster) => roster.entries.map((entry) => entry.date)) ?? [])].sort();
   const [selectedDate, setSelectedDate] = useState(indiaToday);
   const date = selectedDate || indiaToday;
-  const roster = published?.find((item) => item.entries.some((entry) => entry.date === date));
+  const roster = published?.find((item) => item.effectiveStart <= date && item.effectiveEnd >= date && item.entries.some((entry) => entry.date === date));
   const entry = roster?.entries.find((item) => item.date === date);
   const prettyDate = (value: string) => {
     const [year, month, day] = value.split("-").map(Number);

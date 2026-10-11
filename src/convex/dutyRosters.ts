@@ -91,6 +91,25 @@ export const publish = action({
   },
 });
 
+export const forcePublish = action({
+  args: { token: v.string(), rosterId: v.id("rosters"), confirmedReplaceIds: v.array(v.id("rosters")) },
+  handler: async (ctx, args): Promise<{
+    fileName: string;
+    effectiveStart: string;
+    effectiveEnd: string;
+    dateCount: number;
+    superseded: Array<{ rosterId: Id<"rosters">; fileName: string; effectiveStart: string; effectiveEnd: string }>;
+    alreadyPublished: boolean;
+  }> => {
+    const admin = await requireRosterAdmin(ctx, args.token);
+    return await ctx.runMutation(internal.rosters.forcePublishInternal, {
+      rosterId: args.rosterId,
+      confirmedReplaceIds: args.confirmedReplaceIds,
+      publishedBy: admin.username,
+    });
+  },
+});
+
 export const archive = action({
   args: { token: v.string(), rosterId: v.id("rosters") },
   handler: async (ctx, args): Promise<{ ok: boolean }> => { const admin = await requireRosterAdmin(ctx, args.token); await ctx.runMutation(internal.rosters.archiveInternal, { rosterId: args.rosterId, archivedBy: admin.username }); return { ok: true }; },
