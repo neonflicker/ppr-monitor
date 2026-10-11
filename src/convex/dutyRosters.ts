@@ -23,14 +23,17 @@ export const createUploadUrl = action({
 });
 
 export const createDraft = action({
-  args: { token: v.string(), storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string() },
-  handler: async (ctx, args): Promise<{ rosterId: Id<"rosters">; storageUrl: string }> => {
+  args: { token: v.string(), storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), entries: v.optional(v.array(entryValidator)) },
+  handler:  async (ctx, args): Promise<{ rosterId: Id<"rosters">; storageUrl: string }> => {
     const admin = await requireRosterAdmin(ctx, args.token);
     if (!args.fileName.toLowerCase().endsWith(".pdf")) throw new ConvexError("Upload must be a PDF.");
     if (!datePattern.test(args.effectiveStart) || !datePattern.test(args.effectiveEnd) || args.effectiveStart > args.effectiveEnd) throw new ConvexError("Select a valid effective date range.");
+    for (const entry of args.entries ?? []) {
+      if (!datePattern.test(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd) throw new ConvexError("Extracted assignment has a date outside the effective range.");
+    }
     const storageUrl = await ctx.storage.getUrl(args.storageId);
     if (!storageUrl) throw new ConvexError("Uploaded PDF could not be found.");
-    const rosterId: Id<"rosters"> = await ctx.runMutation(internal.rosters.insertDraft, { storageId: args.storageId, fileName: args.fileName, effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, uploadedBy: admin.username });
+    const rosterId: Id<"rosters"> = await ctx.runMutation(internal.rosters.insertDraft, { storageId: args.storageId, fileName: args.fileName, effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, uploadedBy: admin.username, entries: args.entries ?? [] });
     return { rosterId, storageUrl };
   },
 });

@@ -4,8 +4,8 @@ import { internalMutation, internalQuery, query } from "./_generated/server";
 const entryValidator = v.object({ date: v.string(), officeStaff: v.string(), fieldStaff: v.array(v.string()) });
 
 export const insertDraft = internalMutation({
-  args: { storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), uploadedBy: v.string() },
-  handler: async (ctx, args) => ctx.db.insert("rosters", { ...args, entries: [], status: "draft", uploadedAt: Date.now() }),
+  args: { storageId: v.id("_storage"), fileName: v.string(), effectiveStart: v.string(), effectiveEnd: v.string(), uploadedBy: v.string(), entries: v.optional(v.array(entryValidator)) },
+  handler: async (ctx, args) => ctx.db.insert("rosters", { ...args, entries: args.entries ?? [], status: "draft", uploadedAt: Date.now() }),
 });
 
 export const adminList = internalQuery({
