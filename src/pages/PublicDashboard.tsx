@@ -386,6 +386,37 @@ function TodayByVaccinator() {
   );
 }
 
+function TodayDutyRoster() {
+  const published = useQuery(api.rosters.publicPublished, {});
+  const indiaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const availableDates = [...new Set(published?.flatMap((roster) => roster.entries.map((entry) => entry.date)) ?? [])].sort();
+  const [selectedDate, setSelectedDate] = useState(indiaToday);
+  const date = selectedDate || indiaToday;
+  const roster = published?.find((item) => item.entries.some((entry) => entry.date === date));
+  const entry = roster?.entries.find((item) => item.date === date);
+  const prettyDate = (value: string) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "full" }).format(new Date(Date.UTC(year, month - 1, day, 6)));
+  };
+
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-card p-4 sm:p-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <SectionHead title="TODAY'S DUTY ROSTER" sub="OFFICE AND VACCINATION / FIELD DUTY" />
+        <label className="flex items-center gap-2 text-sm"><span className="text-muted-foreground">View date</span><select value={date} onChange={(event) => setSelectedDate(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3" aria-label="View duty roster date"><option value={indiaToday}>Today · {indiaToday}</option>{availableDates.filter((item) => item !== indiaToday).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+      </div>
+      {!published ? <div className="flex justify-center py-5"><Loader2 className="size-5 animate-spin text-primary" /></div> : !entry ? <p className="rounded border border-dashed border-border px-4 py-5 text-center text-sm text-muted-foreground">{date === indiaToday ? "No duty roster published for today." : "No published assignment for this date."}</p> : (
+        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-center">
+          <div className="rounded-md border border-border bg-muted/30 p-3"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</p><p className="font-semibold">{prettyDate(date)}</p></div>
+          <div className="rounded-md border border-border bg-muted/30 p-3"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Office / dispensary duty</p><p className="font-semibold">{entry.officeStaff}</p></div>
+          <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-3"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Vaccination / field duty · {entry.fieldStaff.length} staff</p><div className="mt-2 flex flex-wrap gap-2">{entry.fieldStaff.map((person) => <span key={person} className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-sm font-medium">{person}</span>)}</div></div>
+          {roster?.pdfUrl && <a href={roster.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary underline sm:col-span-3">View / Download complete roster PDF · {roster.fileName}</a>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PendingVaccinationRequests() {
   const requests = useQuery(api.sync.pendingRequests, {});
   const availableRequestFields = [
@@ -399,11 +430,13 @@ function PendingVaccinationRequests() {
     "Timestamp",
     "Date of Application",
     "Doses of Vaccine required?",
+    "VFA ASSIGNED",
     ...availableRequestFields.filter(
       (header) =>
         header !== "Timestamp" &&
         header !== "Date of Application" &&
-        header !== "Doses of Vaccine required?",
+        header !== "Doses of Vaccine required?" &&
+        header !== "VFA ASSIGNED",
     ),
   ];
 
@@ -441,7 +474,9 @@ function PendingVaccinationRequests() {
                       <td key={header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
                         {header === "Timestamp"
                           ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
-                          : value || "—"}
+                          : header === "VFA ASSIGNED"
+                            ? request.assignedVfa
+                            : value || "—"}
                       </td>
                     );
                   })}
@@ -842,6 +877,7 @@ function DashboardView({
           </div>
           <PendingVaccinationRequests />
         </section>
+        <TodayDutyRoster />
 
         {/* ---------------- Public vaccination report form ---------------- */}
         <div className="my-4 flex justify-center px-1">

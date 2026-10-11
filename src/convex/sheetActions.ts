@@ -296,7 +296,14 @@ async function performSync(
         syncId,
         stage: "Matching against stored records…",
       });
-      const existing = await ctx.runQuery(internal.sync.getExisting, {});
+      const existing: Array<{
+        id: string;
+        externalKey: string;
+        naturalKey?: string;
+        source: string;
+        rawHash: string;
+        status: "valid" | "rejected";
+      }> = await ctx.runQuery(internal.sync.getExisting, {});
 
       // Deterministic diff of the CURRENT sheet rows vs the stored records
       // (pure + idempotent, unit-tested): inserts, in-place updates, and the

@@ -43,7 +43,7 @@ export const confirmBharatUpload = action({
       );
     }
 
-    const existing = await ctx.runQuery(internal.bharat.getExistingKeys, {});
+    const existing: Array<{ externalKey: string; naturalKey?: string; source: string; status: "valid" | "rejected" }> = await ctx.runQuery(internal.bharat.getExistingKeys, {});
     const byExternal = new Map(existing.map((r) => [r.externalKey, r]));
     const naturalSource = new Map<string, string>();
     for (const row of existing) {

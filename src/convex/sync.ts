@@ -3,10 +3,13 @@ import {
   internalMutation,
   internalQuery,
   query,
+  type QueryCtx,
   type MutationCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeVillage } from "./lib/villageMatch";
+import { internal } from "./_generated/api";
+import { resolveAssignments } from "./villageAssignments";
 
 const STALE_SYNC_MS = 5 * 60 * 1000;
 
@@ -83,28 +86,20 @@ const requestRowValidator = v.object({
 });
 
 /** Public request rows omit all contact and identity details. */
+async function loadPendingRequests(ctx: QueryCtx) {
+  const rows = await ctx.db.query("vaccinationRequests").withIndex("by_status", (q) => q.eq("status", "pending")).collect();
+  const assignments = await resolveAssignments(ctx, rows.map((row) => row.village));
+  return rows.map(({ _id, timestamp, submittedAt, requestDate, village, fields }) => ({
+    _id, timestamp, submittedAt, requestDate, village,
+    assignedVfa: assignments[normalizeVillage(village)] ?? "Not Assigned",
+    fields,
+  })).sort((a, b) => b.submittedAt - a.submittedAt);
+}
+
 export const pendingRequests = query({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db
-      .query("vaccinationRequests")
-      .withIndex("by_status", (q) => q.eq("status", "pending"))
-      .collect();
-    return rows
-      .map(({ _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone, vaccinationDoneBefore, remarks, fields }) => ({
-        _id,
-        timestamp,
-        submittedAt,
-        requestDate,
-        village,
-        requestorName,
-        email,
-        phone,
-        vaccinationDoneBefore,
-        remarks,
-        fields,
-      }))
-      .sort((a, b) => b.submittedAt - a.submittedAt);
+    return await loadPendingRequests(ctx);
   },
 });
 
@@ -124,7 +119,13 @@ type CompletedRequestRow = {
   fields?: { header: string; value: string }[];
   completedAt?: number;
   completionSource?: string;
+  assignedVfa: string;
 };
+
+export const getPendingRequests = internalQuery({
+  args: {},
+  handler: async (ctx) => await loadPendingRequests(ctx),
+});
 
 export const getCompletedRequests = internalQuery({
   args: {},
@@ -133,13 +134,15 @@ export const getCompletedRequests = internalQuery({
       .query("vaccinationRequests")
       .withIndex("by_status", (q) => q.eq("status", "completed"))
       .collect();
-    return rows
+    const completed = rows
       .filter((row) => row.completionSource === COMPLETION_SOURCE)
-      .sort((a, b) => b.submittedAt - a.submittedAt)
-      .map(({ _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone, vaccinationDoneBefore, remarks, fields, completedAt, completionSource }) => ({
-        _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone,
-        vaccinationDoneBefore, remarks, fields, completedAt, completionSource,
-      }));
+      .sort((a, b) => b.submittedAt - a.submittedAt);
+    const assignments = await resolveAssignments(ctx, completed.map((row) => row.village));
+    return completed.map(({ _id, timestamp, submittedAt, requestDate, village, requestorName, email, phone, vaccinationDoneBefore, remarks, fields, completedAt, completionSource }) => ({
+      _id, timestamp, submittedAt, requestDate, village,
+      assignedVfa: assignments[normalizeVillage(village)] ?? "Not Assigned",
+      requestorName, email, phone, vaccinationDoneBefore, remarks, fields, completedAt, completionSource,
+    }));
   },
 });
 

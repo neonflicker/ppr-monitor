@@ -1,6 +1,7 @@
 "use node";
 
 import { ConvexError, v } from "convex/values";
+import { normalizeName, normalizeVillage } from "./lib/villageMatch";
 import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -249,9 +250,41 @@ export const completedVaccinationRequests = action({
     fields?: { header: string; value: string }[];
     completedAt?: number;
     completionSource?: string;
+    assignedVfa: string;
   }>> => {
     await requireAdmin(ctx, token);
     return await ctx.runQuery(internal.sync.getCompletedRequests, {});
+  },
+});
+
+export const pendingVaccinationRequests = action({
+  args: { token: v.string() },
+  handler: async (ctx, { token }): Promise<Array<{ _id: Id<"vaccinationRequests">; timestamp: string; submittedAt: number; requestDate: number; village: string; assignedVfa: string; fields?: { header: string; value: string }[] }>> => {
+    await requireAdmin(ctx, token);
+    return await ctx.runQuery(internal.sync.getPendingRequests, {});
+  },
+});
+
+export const villageVfaAssignmentOptions = action({
+  args: { token: v.string() },
+  handler: async (ctx, { token }): Promise<{ staff: string[]; rows: Array<{ village: string; normalizedVillage: string; candidates: string[]; assigned: string[] }> }> => {
+    await requireAdmin(ctx, token);
+    return await ctx.runQuery(internal.villageAssignments.assignmentOptions, {});
+  },
+});
+
+export const saveVillageVfaAssignment = action({
+  args: { token: v.string(), village: v.string(), vfaNames: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const admin = await requireAdmin(ctx, args.token);
+    const village = args.village.trim().replace(/\s+/g, " ");
+    const normalizedVillage = normalizeVillage(village);
+    if (!normalizedVillage) throw new ConvexError("Village name is required.");
+    const people: string[] = await ctx.runQuery(internal.villageAssignments.activeVfas, {});
+    const names = [...new Set(args.vfaNames.map((name) => people.find((person: string) => normalizeName(person) === normalizeName(name))).filter((name): name is string => !!name))];
+    if (names.length !== new Set(args.vfaNames.map(normalizeName)).size) throw new ConvexError("Assignments may only use active VFA personnel.");
+    await ctx.runMutation(internal.villageAssignments.saveInternal, { village, normalizedVillage, vfaNames: names, updatedBy: admin.username });
+    return { ok: true };
   },
 });
 

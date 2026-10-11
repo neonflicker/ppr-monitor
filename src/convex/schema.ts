@@ -177,6 +177,16 @@ const schema = defineSchema(
       .index("by_upload", ["uploadId"])
       .index("by_active", ["active"]),
 
+    // Explicit, administrator-managed VFA assignment overrides for requests.
+    // Multiple names are retained as an ambiguity until Admin chooses one.
+    villageVfaAssignments: defineTable({
+      village: v.string(),
+      normalizedVillage: v.string(),
+      vfaNames: v.array(v.string()),
+      updatedAt: v.number(),
+      updatedBy: v.string(),
+    }).index("by_village", ["normalizedVillage"]),
+
     // One row per confirmed allocation file import (newest active wins).
     allocationUploads: defineTable({
       fileName: v.string(),
@@ -318,6 +328,28 @@ const schema = defineSchema(
       at: v.number(),
       by: v.optional(v.string()),
     }).index("by_at", ["at"]),
+
+    // Duty roster documents retain the original PDF in Convex storage and
+    // reviewed per-day assignments separately; drafts and archived versions
+    // are never exposed by the public query.
+    rosters: defineTable({
+      fileName: v.string(),
+      storageId: v.id("_storage"),
+      effectiveStart: v.string(),
+      effectiveEnd: v.string(),
+      entries: v.array(v.object({
+        date: v.string(),
+        officeStaff: v.string(),
+        fieldStaff: v.array(v.string()),
+      })),
+      status: v.union(v.literal("draft"), v.literal("published"), v.literal("archived")),
+      uploadedAt: v.number(),
+      uploadedBy: v.string(),
+      publishedAt: v.optional(v.number()),
+      publishedBy: v.optional(v.string()),
+      archivedAt: v.optional(v.number()),
+      archivedBy: v.optional(v.string()),
+    }).index("by_status", ["status"]),
 
     // Public NOTICE BOARD (independent feature — no relation to the
     // vaccination records, Google Sheet sync, or allocation pipeline).

@@ -1,6 +1,8 @@
 import AdminStatus from "@/components/admin/AdminStatus";
 import BharatUpload from "@/components/admin/BharatUpload";
 import DataValidation from "@/components/admin/DataValidation";
+import DutyRosterManagement from "@/components/admin/DutyRosterManagement";
+import VfaAssignmentManager from "@/components/admin/VfaAssignmentManager";
 import ImportHistory from "@/components/admin/ImportHistory";
 import NoticeManager from "@/components/admin/NoticeManager";
 import TargetAllocation from "@/components/admin/TargetAllocation";
@@ -39,6 +41,8 @@ type TabId =
   | "validation"
   | "notices"
   | "requests"
+  | "assignments"
+  | "rosters"
   | "settings";
 
 const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
@@ -50,6 +54,8 @@ const TABS: { id: TabId; label: string; icon: typeof Gauge }[] = [
   { id: "validation", label: "Data Validation", icon: ClipboardCheck },
   { id: "notices", label: "Notice Board", icon: Bell },
   { id: "requests", label: "Completed Requests", icon: ClipboardCheck },
+  { id: "assignments", label: "VFA Assignments", icon: Users },
+  { id: "rosters", label: "Duty Roster Management", icon: ClipboardCheck },
   { id: "settings", label: "Programme Configuration", icon: Settings2 },
 ];
 
@@ -88,6 +94,10 @@ export default function AdminPanel() {
         return <NoticeManager />;
       case "requests":
         return <CompletedVaccinationRequests token={token} onExpired={expireSession} />;
+      case "assignments":
+        return <VfaAssignmentManager />;
+      case "rosters":
+        return <DutyRosterManagement />;
       case "settings":
         return (
           <div className="space-y-4">
@@ -213,6 +223,8 @@ function CompletedVaccinationRequests({
   token: string | null;
   onExpired: () => void;
 }) {
+  const fetchPending = useAction(api.adminAuth.pendingVaccinationRequests);
+  const [pendingRequests, setPendingRequests] = useState<Awaited<ReturnType<typeof fetchPending>> | null>(null);
   const fetchRequests = useAction(api.adminAuth.completedVaccinationRequests);
   const [requests, setRequests] = useState<Awaited<ReturnType<typeof fetchRequests>> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -220,15 +232,15 @@ function CompletedVaccinationRequests({
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    void fetchRequests({ token }).then((result) => {
-      if (!cancelled) setRequests(result);
+    void Promise.all([fetchRequests({ token }), fetchPending({ token })]).then(([completed, pending]) => {
+      if (!cancelled) { setRequests(completed); setPendingRequests(pending); }
     }).catch((err) => {
       const message = errorMessage(err);
       if (message.startsWith("SESSION_EXPIRED")) onExpired();
       else if (!cancelled) setError(message);
     });
     return () => { cancelled = true; };
-  }, [token, fetchRequests, onExpired]);
+  }, [token, fetchRequests, fetchPending, onExpired]);
 
   if (error) {
     return <p className="rounded border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>;
@@ -242,7 +254,15 @@ function CompletedVaccinationRequests({
   }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-8">
+      <div className="space-y-3">
+        <div>
+          <h2 className="font-title text-xl font-bold uppercase tracking-tight">Pending Vaccination Requests</h2>
+          <p className="text-sm text-muted-foreground">Village assignments are resolved from the active allocation or the administrator-managed mapping.</p>
+        </div>
+        {!pendingRequests ? <div className="flex justify-center py-5"><Loader2 className="size-5 animate-spin text-primary" /></div> : pendingRequests.length === 0 ? <p className="rounded border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No pending vaccination requests.</p> : <div className="overflow-x-auto rounded-md border border-border bg-card"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/70"><tr><th className="p-3">Submitted</th><th className="p-3">Village</th><th className="p-3">VFA ASSIGNED</th><th className="p-3">Request details</th></tr></thead><tbody>{pendingRequests.map((request) => <tr key={request._id} className="border-t border-border align-top"><td className="whitespace-nowrap p-3">{format(request.submittedAt, "d MMM yyyy, hh:mm a")}</td><td className="p-3">{request.village}</td><td className="p-3">{request.assignedVfa}</td><td className="p-3">{(request.fields ?? []).filter((field) => !/email|phone|mobile|remarks/i.test(field.header)).map((field) => `${field.header}: ${field.value}`).join(" · ") || "—"}</td></tr>)}</tbody></table></div>}
+      </div>
+      <div className="space-y-4">
       <div>
         <h2 className="font-title text-xl font-bold uppercase tracking-tight">
           Completed Vaccination Requests
@@ -261,6 +281,7 @@ function CompletedVaccinationRequests({
             <thead className="bg-muted/70">
               <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="w-14 py-2 pl-3 pr-3 font-medium">S/N</th>
+                <th className="w-48 py-2 pr-3 font-medium">VFA ASSIGNED</th>
                 {(requests[0]?.fields ?? []).map((field) => (
                   <th key={field.header} className="w-48 whitespace-normal py-2 pr-3 font-medium">
                     {field.header}
@@ -274,6 +295,7 @@ function CompletedVaccinationRequests({
               {requests.map((request, index) => (
                 <tr key={request._id} className="border-b border-border/60 align-top last:border-0">
                   <td className="py-2.5 pl-3 pr-3 tabular-nums">{index + 1}</td>
+                  <td className="whitespace-normal break-words py-2.5 pr-3">{request.assignedVfa}</td>
                   {(request.fields ?? []).map((field) => (
                     <td key={field.header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
                       {field.header === "Timestamp"
@@ -291,6 +313,7 @@ function CompletedVaccinationRequests({
           </table>
         </div>
       )}
+      </div>
     </section>
   );
 }

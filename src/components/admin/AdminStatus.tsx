@@ -378,6 +378,23 @@ export default function AdminStatus({ overview, onOpenSettings }: Props) {
           </dl>
 
           <div className="space-y-3 text-sm">
+            <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Master vaccination datasheet
+              </p>
+              <a
+                href={overview.sheetUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1.5 break-all text-primary underline-offset-2 hover:underline"
+              >
+                Open original Google Sheet
+                <ExternalLink className="size-3.5 shrink-0" />
+              </a>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Source for vaccination records and dashboard totals. Sync controls and history are above.
+              </p>
+            </div>
             <div>
               <p className="text-xs uppercase tracking-wider text-muted-foreground">
                 PPR values accepted
