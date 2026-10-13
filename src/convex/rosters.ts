@@ -1,7 +1,11 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 
-const entryValidator = v.object({ date: v.string(), officeStaff: v.string(), fieldStaff: v.array(v.string()) });
+const entryValidator = v.object({
+  date: v.string(), officeStaff: v.string(), fieldStaff: v.array(v.string()),
+  sourceOfficeStaff: v.optional(v.string()), sourceFieldStaff: v.optional(v.array(v.string())),
+  sourceWorksheet: v.optional(v.string()), sourceRow: v.optional(v.number()),
+});
 
 export const findBySourceHash = internalQuery({
   args: { sourceHash: v.string() },
@@ -27,12 +31,23 @@ export const adminList = internalQuery({
   },
 });
 
+const dutyNameIdentity = (raw: string) => {
+  const key = raw.toLowerCase().normalize("NFKC").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  return key === "jyoti kamal saikia" ? "jyotikamal saikia" : key;
+};
+
 export const activePersonnel = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("vaccinationRecords").withIndex("by_status", (q) => q.eq("status", "valid")).collect();
     const people = new Map<string, string>();
-    for (const row of rows) if (row.isPpr && /\bvfa\b/i.test(row.designation ?? "") && row.vaccinator?.trim()) people.set(row.vaccinator.trim().toLowerCase().replace(/\s+/g, " "), row.vaccinator.trim());
+    for (const row of rows) {
+      const name = row.vaccinator?.trim();
+      if (!row.isPpr || !/\bvfa\b/i.test(row.designation ?? "") || !name) continue;
+      const identity = dutyNameIdentity(name);
+      const existing = people.get(identity);
+      if (!existing || name.localeCompare(existing) < 0) people.set(identity, name);
+    }
     return [...people.values()].sort((a, b) => a.localeCompare(b));
   },
 });
@@ -56,7 +71,8 @@ function validateRosterEntries(roster: { effectiveStart: string; effectiveEnd: s
   }
   if (!expectedDates.length || expectedDates.length > 370) throw new ConvexError("Effective roster period must contain 1–370 calendar days.");
   for (const entry of entries) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || entry.date < roster.effectiveStart || entry.date > roster.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range.`);
+    const parsedDate = new Date(`${entry.date}T12:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== entry.date || entry.date < roster.effectiveStart || entry.date > roster.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range or invalid.`);
     if (dates.has(entry.date)) throw new ConvexError(`Duplicate roster date: ${entry.date}.`);
     dates.add(entry.date);
     const staff = [entry.officeStaff, ...entry.fieldStaff].map((name) => name.trim());

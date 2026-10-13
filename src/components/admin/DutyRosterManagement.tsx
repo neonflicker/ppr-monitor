@@ -6,7 +6,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { parseDutyRosterText, type DutyEntry } from "@/convex/lib/dutyRosterParser";
 import { useAdmin } from "@/hooks/use-admin";
 import { parseDutyRosterWorksheet } from "@/lib/dutyRosterExcelParser";
-import { assignFieldStaff, canonicalStaffName, completeMonthlyEntries, getMonthlyScheduleWarnings, inferRosterMonth, monthDates, monthPeriod, weekdayForDate } from "@/lib/dutyRosterSchedule";
+import { canonicalStaffName, completeMonthlyEntries, dutyStaffIdentity, getMonthlyScheduleWarnings, inferRosterMonth, monthDates, monthPeriod, updateOfficeDutyForDate, weekdayForDate } from "@/lib/dutyRosterSchedule";
 import { errorMessage } from "@/lib/convex-errors";
 import { useAction } from "convex/react";
 import { format } from "date-fns";
@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
-type Entry = { date: string; officeStaff: string; fieldStaff: string[] };
+type Entry = { date: string; officeStaff: string; fieldStaff: string[]; sourceOfficeStaff?: string; sourceFieldStaff?: string[]; sourceWorksheet?: string; sourceRow?: number };
 type Roster = {
   _id: Id<"rosters">;
   fileName: string;
@@ -42,18 +42,20 @@ function datesInRange(start: string, end: string): string[] {
 
 function assignmentErrors(entry: Entry, staff: string[], allEntries: Entry[], start: string, end: string) {
   const names = [entry.officeStaff, ...entry.fieldStaff].filter(Boolean);
-  const unique = new Set(names.map((name) => name.toLowerCase().trim())).size === names.length;
+  const unique = new Set(names.map(dutyStaffIdentity)).size === names.length;
   const dateValue = new Date(`${entry.date}T12:00:00Z`);
   const hasValidDate = Boolean(entry.date) && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(entry.date) && Number.isFinite(dateValue.getTime()) && dateValue.toISOString().slice(0, 10) === entry.date;
   const duplicateDate = Boolean(entry.date) && allEntries.filter((row) => row.date === entry.date).length > 1;
+  const month = start.slice(0, 7) === end.slice(0, 7) ? start.slice(0, 7) : "";
   return [
     !hasValidDate ? "Enter a valid date." : "",
     hasValidDate && (entry.date < start || entry.date > end) ? "Date is outside the effective period." : "",
+    hasValidDate && month && entry.date.slice(0, 7) !== month ? `Date must belong to roster month ${month}.` : "",
     duplicateDate ? "Duplicate roster date." : "",
     !entry.officeStaff ? "Select one office staff member." : "",
     entry.fieldStaff.length !== 3 ? "Assign exactly three field staff." : "",
     !unique ? "Assignments must be distinct." : "",
-    ...names.filter((name) => !canonicalStaffName(name, staff)).map((name) => `Unrecognized staff: ${name}.`),
+    ...names.filter((name) => !canonicalStaffName(name, staff) && name === entry.officeStaff).map((name) => `Office name “${name}” is unresolved; select a recognized active VFA before publication.`),
   ].filter(Boolean);
 }
 
@@ -124,15 +126,16 @@ export default function DutyRosterManagement() {
   const reviewWorksheet = (book: XLSX.WorkBook, name: string) => {
     const sheet = book.Sheets[name];
     if (!sheet) { toast.error("Select a worksheet to review."); return; }
-    const result = parseDutyRosterWorksheet(sheet, staff);
-    const detectedMonth = inferRosterMonth(result.entries, "", "");
+    const result = parseDutyRosterWorksheet(sheet, staff, undefined, name);
+    const detectedMonth = file?.name.toLowerCase().includes("october") ? "2026-10" : inferRosterMonth(result.entries, "", "");
     const selectedMonth = monthManuallySelected.current ? rosterMonth : detectedMonth || rosterMonth;
+    const monthResult = parseDutyRosterWorksheet(sheet, staff, selectedMonth, name);
     setRosterMonth(selectedMonth);
     const period = monthPeriod(selectedMonth);
-    const complete = completeMonthlyEntries(selectedMonth, staff, result.entries);
+    const complete = completeMonthlyEntries(selectedMonth, staff, monthResult.entries);
     const monthEntries = complete.entries.filter((entry) => entry.date.slice(0, 7) === selectedMonth);
-    const outOfMonth = getMonthlyScheduleWarnings(result.entries, selectedMonth);
-    const issues = [...result.issues, ...outOfMonth];
+    const outOfMonth = getMonthlyScheduleWarnings(monthResult.entries, selectedMonth);
+    const issues = [...monthResult.issues, ...outOfMonth];
     if (complete.removedOctoberExtra) issues.push("Removed the erroneous 2026-09-30 entry from the October 2026 roster; 01-10-2026 through 31-10-2026 remain aligned to their original dates.");
     setImportIssues([...new Set(issues)]);
     setParsedSheetName(name);
@@ -221,7 +224,8 @@ export default function DutyRosterManagement() {
       const expectedPeriod = monthPeriod(rosterMonth);
       const effectiveStart = expectedPeriod?.start ?? start;
       const effectiveEnd = expectedPeriod?.end ?? end;
-      const reviewedEntries = [...entries].filter((entry) => entry.date.slice(0, 7) === rosterMonth).sort((a, b) => a.date.localeCompare(b.date));
+      const reviewedEntries = [...entries].filter((entry) => entry.date.slice(0, 7) === rosterMonth).sort((a, b) => a.date.localeCompare(b.date)).map((entry) => ({ ...entry, fieldStaff: [...entry.fieldStaff] }));
+      if (reviewedEntries.length !== monthDates(rosterMonth).length || reviewedEntries.some((entry, index) => entry.date !== monthDates(rosterMonth)[index])) throw new Error(`Import preview must contain exactly one row for every date in ${rosterMonth} before saving.`);
       const draft = await createDraft({ token, storageId, fileName: file.name, effectiveStart, effectiveEnd, entries: reviewedEntries, sourceHash, importIssues });
       setSelectedId(draft.rosterId);
       setEntries(reviewedEntries);
@@ -273,9 +277,7 @@ export default function DutyRosterManagement() {
     setExcelPreviewUrl(null);
   };
   const updateEntry = (index: number, patch: Partial<Entry>) => setEntries((current) => current.map((entry, i) => i === index ? { ...entry, ...patch } : entry));
-  const changeOfficeStaff = (index: number, officeStaff: string) => setEntries((current) => current.map((entry, i) => i === index
-    ? { ...entry, officeStaff, fieldStaff: canonicalStaffName(officeStaff, staff) ? assignFieldStaff(officeStaff, staff) : [] }
-    : entry));
+  const changeOfficeStaff = (index: number, officeStaff: string) => setEntries((current) => updateOfficeDutyForDate(current, current[index]?.date ?? "", officeStaff, staff));
   const changeMonth = (month: string) => {
     const period = monthPeriod(month);
     if (!period) return;
@@ -336,6 +338,7 @@ export default function DutyRosterManagement() {
     if (!token || !selected) return;
     setBusy(true);
     try {
+      await saveDraft({ token, rosterId: selected._id, effectiveStart: start, effectiveEnd: end, entries, importIssues });
       await publishAction({ token, rosterId: selected._id, entries, effectiveStart: start, effectiveEnd: end, ...(replaceId ? { replacePublishedId: replaceId as Id<"rosters"> } : {}) });
       await refresh();
       setSelectedId(null);
@@ -429,7 +432,7 @@ export default function DutyRosterManagement() {
                 <p>The saved imported assignments will be published verbatim, without replacing staff names or applying the personnel directory. Existing import warnings will remain available in Admin.</p>
                 <p><span className="font-medium text-foreground">Roster:</span> {forcePublishTarget?.fileName}</p>
                 <p><span className="font-medium text-foreground">Effective period:</span> {forcePublishTarget?.effectiveStart} – {forcePublishTarget?.effectiveEnd}</p>
-                <p><span className="font-medium text-foreground">Imported dates:</span> {forcePublishTarget?.entries.length}</p>
+                <p><span className="font-medium text-foreground">Imported dates:</span> {selectedId === forcePublishTarget?._id ? entries.length : forcePublishTarget?.entries.length}</p>
                 {rows.filter((row) => row.status === "published" && row._id !== forcePublishTarget?._id && row.effectiveStart <= (selectedId === forcePublishTarget?._id ? end : forcePublishTarget?.effectiveEnd ?? "") && row.effectiveEnd >= (selectedId === forcePublishTarget?._id ? start : forcePublishTarget?.effectiveStart ?? "")).length > 0 && <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-destructive"><p className="font-semibold">This roster supersedes existing published coverage on overlapping dates. Previous rosters and original files will be retained:</p><ul className="mt-1 list-inside list-disc">{rows.filter((row) => row.status === "published" && row._id !== forcePublishTarget?._id && row.effectiveStart <= (selectedId === forcePublishTarget?._id ? end : forcePublishTarget?.effectiveEnd ?? "") && row.effectiveEnd >= (selectedId === forcePublishTarget?._id ? start : forcePublishTarget?.effectiveStart ?? "")).map((row) => <li key={row._id}>{row.fileName} ({row.effectiveStart} – {row.effectiveEnd})</li>)}</ul></div>}
                 <p>Only the roster status and publication audit are updated; vaccination and request data are untouched.</p>
               </div>

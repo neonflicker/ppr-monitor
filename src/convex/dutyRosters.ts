@@ -8,7 +8,11 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeName } from "./lib/villageMatch";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-const entryValidator = v.object({ date: v.string(), officeStaff: v.string(), fieldStaff: v.array(v.string()) });
+const entryValidator = v.object({
+  date: v.string(), officeStaff: v.string(), fieldStaff: v.array(v.string()),
+  sourceOfficeStaff: v.optional(v.string()), sourceFieldStaff: v.optional(v.array(v.string())),
+  sourceWorksheet: v.optional(v.string()), sourceRow: v.optional(v.number()),
+});
 const hashToken = (token: string) => createHash("sha256").update(token, "utf8").digest("hex");
 async function requireRosterAdmin(ctx: ActionCtx, token: string): Promise<{ username: string }> {
   if (!token) throw new ConvexError("SESSION_EXPIRED: Please sign in as administrator.");
@@ -102,7 +106,7 @@ export const publish = action({
     while (cursor <= last && expectedDates.size <= 370) { expectedDates.add(cursor.toISOString().slice(0, 10)); cursor.setUTCDate(cursor.getUTCDate() + 1); }
     if (!expectedDates.size || expectedDates.size > 370) throw new ConvexError("Effective roster period must contain 1–370 calendar days.");
     for (const entry of args.entries) {
-      if (!datePattern.test(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range.`);
+      if (!validDate(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range or invalid.`);
       if (dates.has(entry.date)) throw new ConvexError(`Duplicate roster date: ${entry.date}.`);
       dates.add(entry.date);
       const assigned = [entry.officeStaff, ...entry.fieldStaff].map((name) => name.trim());
