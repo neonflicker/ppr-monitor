@@ -6,6 +6,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { parseDutyRosterText, type DutyEntry } from "@/convex/lib/dutyRosterParser";
 import { useAdmin } from "@/hooks/use-admin";
 import { parseDutyRosterWorksheet } from "@/lib/dutyRosterExcelParser";
+import { assignFieldStaff, canonicalStaffName, completeMonthlyEntries, getMonthlyScheduleWarnings, inferRosterMonth, monthDates, monthPeriod, weekdayForDate } from "@/lib/dutyRosterSchedule";
 import { errorMessage } from "@/lib/convex-errors";
 import { useAction } from "convex/react";
 import { format } from "date-fns";
@@ -52,7 +53,7 @@ function assignmentErrors(entry: Entry, staff: string[], allEntries: Entry[], st
     !entry.officeStaff ? "Select one office staff member." : "",
     entry.fieldStaff.length !== 3 ? "Assign exactly three field staff." : "",
     !unique ? "Assignments must be distinct." : "",
-    ...names.filter((name) => !staff.some((person) => person.toLowerCase() === name.toLowerCase())).map((name) => `Unrecognized staff: ${name}.`),
+    ...names.filter((name) => !canonicalStaffName(name, staff)).map((name) => `Unrecognized staff: ${name}.`),
   ].filter(Boolean);
 }
 
@@ -62,6 +63,7 @@ export default function DutyRosterManagement() {
   const excelRef = useRef<HTMLInputElement>(null);
   const uploadUrlAction = useAction(api.dutyRosters.createUploadUrl);
   const createDraft = useAction(api.dutyRosters.createDraft);
+  const saveDraft = useAction(api.dutyRosters.saveDraft);
   const listAction = useAction(api.dutyRosters.list);
   const personnelAction = useAction(api.dutyRosters.personnel);
   const publishAction = useAction(api.dutyRosters.publish);
@@ -80,8 +82,12 @@ export default function DutyRosterManagement() {
   const [parsedSheetName, setParsedSheetName] = useState("");
   const [importIssues, setImportIssues] = useState<string[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [start, setStart] = useState(format(new Date(), "yyyy-MM-01"));
-  const [end, setEnd] = useState(format(new Date(), "yyyy-MM-dd"));
+  const initialMonth = format(new Date(), "yyyy-MM");
+  const initialPeriod = monthPeriod(initialMonth)!;
+  const [rosterMonth, setRosterMonth] = useState(initialMonth);
+  const monthManuallySelected = useRef(false);
+  const [start, setStart] = useState(initialPeriod.start);
+  const [end, setEnd] = useState(initialPeriod.end);
   const [selectedId, setSelectedId] = useState<Id<"rosters"> | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [replaceId, setReplaceId] = useState("");
@@ -119,17 +125,21 @@ export default function DutyRosterManagement() {
     const sheet = book.Sheets[name];
     if (!sheet) { toast.error("Select a worksheet to review."); return; }
     const result = parseDutyRosterWorksheet(sheet, staff);
-    setImportIssues(result.issues);
+    const detectedMonth = inferRosterMonth(result.entries, "", "");
+    const selectedMonth = monthManuallySelected.current ? rosterMonth : detectedMonth || rosterMonth;
+    setRosterMonth(selectedMonth);
+    const period = monthPeriod(selectedMonth);
+    const complete = completeMonthlyEntries(selectedMonth, staff, result.entries);
+    const monthEntries = complete.entries.filter((entry) => entry.date.slice(0, 7) === selectedMonth);
+    const outOfMonth = getMonthlyScheduleWarnings(result.entries, selectedMonth);
+    const issues = [...result.issues, ...outOfMonth];
+    if (complete.removedOctoberExtra) issues.push("Removed the erroneous 2026-09-30 entry from the October 2026 roster; 01-10-2026 through 31-10-2026 remain aligned to their original dates.");
+    setImportIssues([...new Set(issues)]);
     setParsedSheetName(name);
-    if (result.entries.length) {
-      const dates = result.entries.map((entry) => entry.date).sort();
-      const byDate = new Map(result.entries.map((entry) => [entry.date, entry]));
-      setEntries(dates.map((date) => byDate.get(date)).filter((entry): entry is Entry => entry !== undefined));
-      setStart(dates[0]);
-      setEnd(dates[dates.length - 1]);
-    } else setEntries([]);
-    if (result.issues.length) toast.warning("Review the flagged workbook rows before saving.", { description: `${result.issues.length} import issue${result.issues.length === 1 ? "" : "s"} found.` });
-    else if (result.entries.length) toast.success(`Read ${result.entries.length} daily assignments from ${name}.`);
+    if (period) { setStart(period.start); setEnd(period.end); }
+    setEntries(monthEntries);
+    if (issues.length) toast.warning("Review the flagged workbook rows before saving.", { description: `${issues.length} import issue${issues.length === 1 ? "" : "s"} found.` });
+    else if (monthEntries.length) toast.success(`Read ${monthEntries.length} monthly assignments from ${name}.`);
     else toast.error("No roster assignments were found on this worksheet.");
   };
 
@@ -138,6 +148,7 @@ export default function DutyRosterManagement() {
     if (!/\.(xlsx|xls)$/i.test(next.name)) { toast.error("Choose an .xlsx or .xls workbook."); return; }
     setFile(next);
     setSelectedId(null);
+    monthManuallySelected.current = false;
     setEntries([]);
     setImportIssues([]);
     setParsedSheetName("");
@@ -170,14 +181,20 @@ export default function DutyRosterManagement() {
       } catch {
         toast.info("PDF text could not be extracted. Enter the daily assignments from the preview.");
       } finally { await parser.destroy(); }
+      const period = monthPeriod(rosterMonth);
+      const effectiveStart = period?.start ?? start;
+      const effectiveEnd = period?.end ?? end;
+      const monthlyEntries = completeMonthlyEntries(rosterMonth, staff, extractedEntries).entries
+        .filter((entry) => entry.date.slice(0, 7) === rosterMonth);
       const signedUrl = await uploadUrlAction({ token });
       const response = await fetch(signedUrl, { method: "POST", headers: { "Content-Type": "application/pdf" }, body: file });
       if (!response.ok) throw new Error("PDF upload failed.");
       const { storageId } = await response.json() as { storageId: Id<"_storage"> };
-      const draft = await createDraft({ token, storageId, fileName: file.name, effectiveStart: start, effectiveEnd: end, entries: extractedEntries });
+      const draft = await createDraft({ token, storageId, fileName: file.name, effectiveStart, effectiveEnd, entries: monthlyEntries });
       setSelectedId(draft.rosterId);
-      const byDate = new Map(extractedEntries.map((entry) => [entry.date, entry]));
-      setEntries(datesInRange(start, end).map((date) => byDate.get(date) ?? { date, officeStaff: "", fieldStaff: [] }));
+      setStart(effectiveStart);
+      setEnd(effectiveEnd);
+      setEntries(monthlyEntries);
       setFile(null);
       setPreviewUrl(draft.storageUrl);
       if (fileRef.current) fileRef.current.value = "";
@@ -201,10 +218,10 @@ export default function DutyRosterManagement() {
       const response = await fetch(uploadUrl, { method: "POST", headers: { "Content-Type": contentType }, body: file });
       if (!response.ok) throw new Error("Excel workbook upload failed.");
       const { storageId } = await response.json() as { storageId: Id<"_storage"> };
-      const importedDates = entries.map((entry) => entry.date).filter(Boolean).sort();
-      const effectiveStart = importedDates[0] ?? start;
-      const effectiveEnd = importedDates[importedDates.length - 1] ?? end;
-      const reviewedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+      const expectedPeriod = monthPeriod(rosterMonth);
+      const effectiveStart = expectedPeriod?.start ?? start;
+      const effectiveEnd = expectedPeriod?.end ?? end;
+      const reviewedEntries = [...entries].filter((entry) => entry.date.slice(0, 7) === rosterMonth).sort((a, b) => a.date.localeCompare(b.date));
       const draft = await createDraft({ token, storageId, fileName: file.name, effectiveStart, effectiveEnd, entries: reviewedEntries, sourceHash, importIssues });
       setSelectedId(draft.rosterId);
       setEntries(reviewedEntries);
@@ -233,20 +250,67 @@ export default function DutyRosterManagement() {
     setImportIssues(row.importIssues ?? []);
     setStart(row.effectiveStart);
     setEnd(row.effectiveEnd);
-    const byDate = new Map(row.entries.filter((entry) => entry.date).map((entry) => [entry.date, entry]));
-    setEntries([...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+    const month = inferRosterMonth(row.entries, row.effectiveStart, row.effectiveEnd);
+    monthManuallySelected.current = true;
+    setRosterMonth(month);
+    const period = monthPeriod(month);
+    const isSingleMonth = row.effectiveStart.slice(0, 7) === row.effectiveEnd.slice(0, 7);
+    const normalized = isSingleMonth ? completeMonthlyEntries(month, staff, row.entries).entries : row.entries;
+    setEntries(isSingleMonth ? normalized.filter((entry) => entry.date.slice(0, 7) === month) : [...row.entries].sort((a, b) => a.date.localeCompare(b.date)));
+    if (isSingleMonth && period && month === "2026-10" && (row.effectiveStart !== period.start || row.effectiveEnd !== period.end || row.entries.some((entry) => entry.date === "2026-09-30"))) {
+      setStart(period.start);
+      setEnd(period.end);
+      const nextIssues = [...new Set([...(row.importIssues ?? []), "Corrected the October 2026 editing period to 01-10-2026 through 31-10-2026 and removed the 30-09-2026 entry from this editor."])];
+      setImportIssues(nextIssues);
+      if (token) {
+        void saveDraft({ token, rosterId: row._id, effectiveStart: period.start, effectiveEnd: period.end, entries: normalized.filter((entry) => entry.date.slice(0, 7) === month), importIssues: nextIssues })
+          .then(() => refresh())
+          .then(() => toast.success("Corrected the October 2026 draft to 31 daily rows; no assignments were shifted."))
+          .catch((error) => toast.error("Could not persist the October draft correction", { description: errorMessage(error) }));
+      }
+    }
     setPreviewUrl(row.originalUrl);
     setExcelPreviewUrl(null);
   };
   const updateEntry = (index: number, patch: Partial<Entry>) => setEntries((current) => current.map((entry, i) => i === index ? { ...entry, ...patch } : entry));
+  const changeOfficeStaff = (index: number, officeStaff: string) => setEntries((current) => current.map((entry, i) => i === index
+    ? { ...entry, officeStaff, fieldStaff: canonicalStaffName(officeStaff, staff) ? assignFieldStaff(officeStaff, staff) : [] }
+    : entry));
+  const changeMonth = (month: string) => {
+    const period = monthPeriod(month);
+    if (!period) return;
+    const completed = completeMonthlyEntries(month, staff, entries);
+    monthManuallySelected.current = true;
+    setRosterMonth(month);
+    setStart(period.start);
+    setEnd(period.end);
+    setEntries(completed.entries.filter((entry) => entry.date.slice(0, 7) === month));
+    if (completed.removedOctoberExtra) setImportIssues((current) => [...current, "Removed the erroneous 2026-09-30 entry; October dates and assignments were not shifted."]);
+  };
+  const saveCurrentDraft = async () => {
+    if (!token || !selected || selected.status !== "draft" || busy) return;
+    setBusy(true);
+    try {
+      await saveDraft({ token, rosterId: selected._id, effectiveStart: start, effectiveEnd: end, entries, importIssues });
+      await refresh();
+      toast.success("Roster draft saved with the current edited assignments.");
+    } catch (error) {
+      const message = errorMessage(error);
+      if (message.startsWith("SESSION_EXPIRED")) expireSession();
+      toast.error("Could not save roster draft", { description: message });
+    } finally { setBusy(false); }
+  };
   const forcePublish = async () => {
     if (!token || !forcePublishTarget || busy) return;
     const target = forcePublishTarget;
+    const targetStart = selectedId === target._id ? start : target.effectiveStart;
+    const targetEnd = selectedId === target._id ? end : target.effectiveEnd;
     const overlappingIds = rows
-      .filter((row) => row.status === "published" && row._id !== target._id && row.effectiveStart <= target.effectiveEnd && row.effectiveEnd >= target.effectiveStart)
+      .filter((row) => row.status === "published" && row._id !== target._id && row.effectiveStart <= targetEnd && row.effectiveEnd >= targetStart)
       .map((row) => row._id);
     setBusy(true);
     try {
+      if (selectedId === target._id) await saveDraft({ token, rosterId: target._id, effectiveStart: start, effectiveEnd: end, entries, importIssues });
       const result = await forcePublishAction({ token, rosterId: target._id, confirmedReplaceIds: overlappingIds });
       setSelectedId(null);
       setForcePublishTarget(null);
@@ -272,7 +336,7 @@ export default function DutyRosterManagement() {
     if (!token || !selected) return;
     setBusy(true);
     try {
-      await publishAction({ token, rosterId: selected._id, entries, ...(replaceId ? { replacePublishedId: replaceId as Id<"rosters"> } : {}) });
+      await publishAction({ token, rosterId: selected._id, entries, effectiveStart: start, effectiveEnd: end, ...(replaceId ? { replacePublishedId: replaceId as Id<"rosters"> } : {}) });
       await refresh();
       setSelectedId(null);
       toast.success("Duty roster published.");
@@ -316,8 +380,8 @@ export default function DutyRosterManagement() {
         <p className="text-sm text-muted-foreground">Import a workbook for automatic date-wise prefill, or upload the original roster PDF. Review and correct assignments using active staff records before publishing; unreadable and uncertain rows remain flagged for manual review.</p>
       </header>
       <div className="grid gap-4 rounded-md border border-border bg-card p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-        <label className="space-y-1 text-sm"><span>Effective from</span><Input type="date" value={start} onChange={(event) => setStart(event.target.value)} /></label>
-        <label className="space-y-1 text-sm"><span>Effective through</span><Input type="date" value={end} onChange={(event) => setEnd(event.target.value)} /></label>
+        <label className="space-y-1 text-sm"><span>Roster month</span><Input type="month" value={rosterMonth} onChange={(event) => changeMonth(event.target.value)} /></label>
+        <div className="space-y-1 text-sm"><span>Effective period</span><p className="h-9 rounded-md border border-input bg-muted/40 px-3 py-2 tabular-nums">{start} – {end}</p></div>
         <div className="flex flex-wrap gap-2">
           <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="sr-only" onChange={(event) => choosePdf(event.target.files?.[0])} />
           <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}><FileText className="size-4" />Choose PDF</Button>
@@ -330,25 +394,25 @@ export default function DutyRosterManagement() {
       {workbook && file && <div className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-card p-4"><div className="min-w-56 flex-1 space-y-1 text-sm"><label htmlFor="roster-worksheet">Workbook worksheet</label><select id="roster-worksheet" value={sheetName} onChange={(event) => setSheetName(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3">{workbook.SheetNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></div><Button type="button" variant="outline" onClick={() => reviewWorksheet(workbook, sheetName)} disabled={busy}><FileSpreadsheet className="size-4" />Review worksheet</Button><a href={excelPreviewUrl ?? undefined} download={file.name} className="text-sm font-medium text-primary underline">Download original workbook</a></div>}
       {previewUrl && selected && <div className="overflow-hidden rounded-md border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-3 py-2 text-sm"><span className="font-medium">{selected.fileName}</span><a className="text-primary underline" href={previewUrl} target="_blank" rel="noopener noreferrer">Open / download original</a></div>{selected.fileName.toLowerCase().endsWith(".pdf") && <iframe title="Duty roster PDF preview" src={previewUrl} className="h-[420px] w-full" />}</div>}
       {(selected?.status === "draft" || (workbook !== null && parsedSheetName !== "") || (workbook !== null && importIssues.length > 0)) && <div className="space-y-3 rounded-md border border-border bg-card p-4">
-        <div><h3 className="font-semibold">Review daily staffing · {selected?.fileName ?? `${file?.name} · ${parsedSheetName || "choose worksheet"}`}</h3><p className="text-xs text-muted-foreground">Imported assignments appear below and remain editable. Standard publication checks personnel and assignments; force publication keeps saved workbook values unchanged and leaves warnings for follow-up review.</p></div>
+        <div><h3 className="font-semibold">Review daily staffing · {selected?.fileName ?? `${file?.name} · ${parsedSheetName || "choose worksheet"}`}</h3><p className="text-xs text-muted-foreground">Imported assignments remain editable. October 2026 uses exactly 01–31 October; out-of-month source rows are flagged and omitted without shifting assignments. Change one office selection to update only that date’s other active VFAs.</p></div>
         {importIssues.length > 0 && <div role="alert" className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"><p className="font-semibold">Source rows need review · {importIssues.length} issue{importIssues.length === 1 ? "" : "s"}</p><ul className="max-h-40 list-inside list-disc overflow-y-auto">{importIssues.map((issue, index) => <li key={`${index}-${issue}`}>{issue}</li>)}</ul></div>}
         {staff.length === 0 && <p className="text-sm text-destructive">No active personnel names are available; publication is blocked until valid personnel records exist.</p>}
         {workbook && entries.length > 0 && <div className="overflow-x-auto rounded-md border border-border"><table className="w-full min-w-[600px] text-left text-sm"><thead className="bg-muted/70"><tr><th className="p-2">Date</th><th className="p-2">Dispensary duty</th><th className="p-2">Vaccination / field duty</th><th className="p-2">Review</th></tr></thead><tbody>{entries.map((entry, index) => <tr key={`preview-${entry.date}-${index}`} className="border-t border-border"><td className="p-2">{entry.date}</td><td className="p-2">{entry.officeStaff || "—"}</td><td className="p-2">{entry.fieldStaff.join(", ") || "—"}</td><td className="p-2 text-xs">{assignmentErrors(entry, staff, entries, start, end).join(" ") || "Ready"}</td></tr>)}</tbody></table></div>}
         <div className="space-y-3">{entries.map((entry, index) => {
           const errors = assignmentErrors(entry, staff, entries, start, end);
           return <div key={`${entry.date}-${index}`} className={`grid gap-2 rounded border p-3 sm:grid-cols-[110px_1fr_1.5fr] sm:items-center ${errors.length ? "border-destructive/50 bg-destructive/5" : "border-border/70"}`}>
-            <div className="space-y-1 text-sm"><Input aria-label={`Duty date row ${index + 1}`} type="date" value={entry.date} onChange={(event) => updateEntry(index, { date: event.target.value })} className="h-8 px-2" /><div className="text-xs text-muted-foreground">{entry.date ? format(new Date(`${entry.date}T12:00:00`), "EEEE") : "Choose date"}</div>{errors.map((error) => <div key={error} className="mt-1 text-xs text-destructive">{error}</div>)}</div>
-            <label className="space-y-1 text-xs"><span>Office / dispensary</span><select value={entry.officeStaff} onChange={(event) => updateEntry(index, { officeStaff: event.target.value })} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"><option value="">Select VFA</option>{staff.map((person) => <option key={person} value={person}>{person}</option>)}</select></label>
-            <label className="space-y-1 text-xs"><span>Field duty · comma-separated names (3)</span><Input list="roster-staff" value={entry.fieldStaff.join(", ")} onChange={(event) => updateEntry(index, { fieldStaff: event.target.value.split(",").map((name) => name.trim()).filter(Boolean) })} placeholder="Choose 3 names from active personnel" /></label>
+            <div className="space-y-1 text-sm"><Input aria-label={`Duty date row ${index + 1}`} type="date" value={entry.date} onChange={(event) => updateEntry(index, { date: event.target.value })} className="h-8 px-2" /><div className="text-xs text-muted-foreground">{weekdayForDate(entry.date)}</div>{errors.map((error) => <div key={error} className="mt-1 text-xs text-destructive">{error}</div>)}</div>
+            <label className="space-y-1 text-xs"><span>Office / dispensary</span><select value={entry.officeStaff} onChange={(event) => changeOfficeStaff(index, event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"><option value="">Select VFA</option>{staff.map((person) => <option key={person} value={person}>{person}</option>)}</select></label>
+            <div className="space-y-1 text-xs"><span>Vaccination / field duty · automatically assigned (3)</span><div className="min-h-9 rounded-md border border-input bg-muted/30 px-3 py-2 text-sm leading-6">{entry.fieldStaff.length ? entry.fieldStaff.join(", ") : "Select a recognized office-duty VFA to fill the other active staff."}</div></div>
           </div>;
         })}</div>
-        <datalist id="roster-staff">{staff.map((person) => <option key={person} value={person} />)}</datalist>
         {entries.length === 0 && <p className="text-sm text-destructive">No date rows were found. Select the effective period above, then add assignment rows for manual completion.</p>}
         {workbook && !selected && entries.length === 0 && <Button type="button" variant="outline" onClick={() => setEntries(datesInRange(start, end).map((date) => ({ date, officeStaff: "", fieldStaff: [] })))}>Create manual date rows for this period</Button>}
         <p className="text-xs text-muted-foreground">Distribution summary: {entries.length} roster dates · {entries.filter((entry) => entry.officeStaff.trim()).length} office assignments · {entries.reduce((total, entry) => total + entry.fieldStaff.length, 0)} field assignments entered.</p>
         {publishedOverlaps.length > 0 && <label className="block max-w-xl space-y-1 text-sm"><span>Existing published roster overlaps. Select the version to replace:</span><select value={replaceId} onChange={(event) => setReplaceId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3"><option value="">Choose published version…</option>{publishedOverlaps.map((row) => <option key={row._id} value={row._id}>{row.fileName} · {row.effectiveStart} to {row.effectiveEnd}</option>)}</select></label>}
         {workbook && !selected && <Button onClick={() => void uploadExcel()} disabled={busy || !parsedSheetName}>{busy ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}Save Excel draft for review</Button>}
         {selected?.status === "draft" && <div className="flex flex-wrap gap-3 border-t border-border pt-3">
+          <Button type="button" variant="outline" onClick={() => void saveCurrentDraft()} disabled={busy}>Save Draft</Button>
           <Button onClick={() => void publish()} disabled={busy || !entries.length || !staff.length || entries.some((entry) => assignmentErrors(entry, staff, entries, start, end).length > 0) || (publishedOverlaps.length > 0 && !replaceId)}>{busy ? <Loader2 className="size-4 animate-spin" /> : null}Publish / replace reviewed roster</Button>
           <Button type="button" variant="destructive" className="font-bold" onClick={() => setForcePublishTarget(selected)} disabled={busy || !selected.entries.length}>
             <ShieldAlert className="size-4" /> PUBLISH ROSTER ANYWAY
@@ -366,7 +430,7 @@ export default function DutyRosterManagement() {
                 <p><span className="font-medium text-foreground">Roster:</span> {forcePublishTarget?.fileName}</p>
                 <p><span className="font-medium text-foreground">Effective period:</span> {forcePublishTarget?.effectiveStart} – {forcePublishTarget?.effectiveEnd}</p>
                 <p><span className="font-medium text-foreground">Imported dates:</span> {forcePublishTarget?.entries.length}</p>
-                {rows.filter((row) => row.status === "published" && row._id !== forcePublishTarget?._id && row.effectiveStart <= (forcePublishTarget?.effectiveEnd ?? "") && row.effectiveEnd >= (forcePublishTarget?.effectiveStart ?? "")).length > 0 && <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-destructive"><p className="font-semibold">This roster supersedes existing published coverage on overlapping dates. Previous rosters and original files will be retained:</p><ul className="mt-1 list-inside list-disc">{rows.filter((row) => row.status === "published" && row._id !== forcePublishTarget?._id && row.effectiveStart <= (forcePublishTarget?.effectiveEnd ?? "") && row.effectiveEnd >= (forcePublishTarget?.effectiveStart ?? "")).map((row) => <li key={row._id}>{row.fileName} ({row.effectiveStart} – {row.effectiveEnd})</li>)}</ul></div>}
+                {rows.filter((row) => row.status === "published" && row._id !== forcePublishTarget?._id && row.effectiveStart <= (selectedId === forcePublishTarget?._id ? end : forcePublishTarget?.effectiveEnd ?? "") && row.effectiveEnd >= (selectedId === forcePublishTarget?._id ? start : forcePublishTarget?.effectiveStart ?? "")).length > 0 && <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-destructive"><p className="font-semibold">This roster supersedes existing published coverage on overlapping dates. Previous rosters and original files will be retained:</p><ul className="mt-1 list-inside list-disc">{rows.filter((row) => row.status === "published" && row._id !== forcePublishTarget?._id && row.effectiveStart <= (selectedId === forcePublishTarget?._id ? end : forcePublishTarget?.effectiveEnd ?? "") && row.effectiveEnd >= (selectedId === forcePublishTarget?._id ? start : forcePublishTarget?.effectiveStart ?? "")).map((row) => <li key={row._id}>{row.fileName} ({row.effectiveStart} – {row.effectiveEnd})</li>)}</ul></div>}
                 <p>Only the roster status and publication audit are updated; vaccination and request data are untouched.</p>
               </div>
             </AlertDialogDescription>

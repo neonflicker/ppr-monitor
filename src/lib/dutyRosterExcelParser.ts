@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { normalizeName } from "@/convex/lib/villageMatch";
+import { canonicalStaffName } from "@/lib/dutyRosterSchedule";
 
 export type DutyRosterExcelEntry = {
   date: string;
@@ -55,14 +55,10 @@ function dateToIso(value: unknown): string | null {
 function namesInCell(value: unknown, activeStaff: string[], issues: string[], rowNumber: number, duty: string): string[] {
   const raw = cellText(value);
   if (!raw) return [];
-  const active = new Map(activeStaff.map((name) => [normalizeName(name), name]));
   return raw.split(/[,;\n]|\s+(?:and|&)\s+/i).map((candidate) => candidate.trim().replace(/^[-•\s]+|[-•\s]+$/g, "")).filter(Boolean).map((candidate) => {
-    if (!active.has(normalizeName(candidate))) {
-      issues.push(`Worksheet row ${rowNumber}: unrecognized ${duty} staff name “${candidate}”.`);
-    }
-    // The workbook spelling is the assignment source of truth. Keep it even
-    // when it matches an official personnel name only through normalization.
-    return candidate;
+    const canonical = canonicalStaffName(candidate, activeStaff);
+    if (!canonical) issues.push(`Worksheet row ${rowNumber}: unrecognized ${duty} staff name “${candidate}”; retained for administrator review.`);
+    return canonical ?? candidate;
   });
 }
 
@@ -94,6 +90,11 @@ export function parseDutyRosterWorksheet(sheet: XLSX.WorkSheet, activeStaff: str
     }
     const officeNames = namesInCell(officeCell, activeStaff, issues, index + 1, "dispensary");
     const fieldNames = namesInCell(fieldCell, activeStaff, issues, index + 1, "field-duty");
+    const weekday = cellText(row[columns.day]);
+    const expectedWeekday = new Intl.DateTimeFormat("en", { weekday: "long", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+    if (weekday && weekday.toLowerCase() !== expectedWeekday.toLowerCase()) {
+      issues.push(`Worksheet row ${index + 1} (${date}): supplied weekday “${weekday}” does not match ${expectedWeekday}.`);
+    }
     if (officeNames.length !== 1) issues.push(`Worksheet row ${index + 1} (${date}): expected one dispensary assignment, found ${officeNames.length}.`);
     if (fieldNames.length !== 3) issues.push(`Worksheet row ${index + 1} (${date}): expected three field assignments, found ${fieldNames.length}.`);
     const entry = { date, officeStaff: officeNames[0] ?? "", fieldStaff: fieldNames };

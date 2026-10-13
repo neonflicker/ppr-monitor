@@ -33,7 +33,11 @@ export const createDraft = action({
     const extension = args.fileName.toLowerCase().split(".").pop();
     if (!extension || !["pdf", "xlsx", "xls"].includes(extension)) throw new ConvexError("Upload must be a PDF, .xlsx, or .xls file.");
     if (args.sourceHash && await ctx.runQuery(internal.rosters.findBySourceHash, { sourceHash: args.sourceHash })) throw new ConvexError("This exact workbook has already been imported. Review its existing roster entry instead.");
-    if (!datePattern.test(args.effectiveStart) || !datePattern.test(args.effectiveEnd) || args.effectiveStart > args.effectiveEnd) throw new ConvexError("Select a valid effective date range.");
+    const validDate = (value: string) => {
+      const date = new Date(`${value}T12:00:00Z`);
+      return datePattern.test(value) && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+    if (!validDate(args.effectiveStart) || !validDate(args.effectiveEnd) || args.effectiveStart > args.effectiveEnd) throw new ConvexError("Select a valid effective date range.");
     for (const entry of args.entries ?? []) {
       if (entry.date && (!datePattern.test(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd)) throw new ConvexError("Extracted assignment has a date outside the effective range.");
     }
@@ -62,8 +66,23 @@ export const personnel = action({
   handler: async (ctx, { token }): Promise<string[]> => { await requireRosterAdmin(ctx, token); return await ctx.runQuery(internal.rosters.activePersonnel, {}); },
 });
 
+export const saveDraft = action({
+  args: { token: v.string(), rosterId: v.id("rosters"), effectiveStart: v.string(), effectiveEnd: v.string(), entries: v.array(entryValidator), importIssues: v.array(v.string()) },
+  handler: async (ctx, args): Promise<{ ok: boolean }> => {
+    await requireRosterAdmin(ctx, args.token);
+    await ctx.runMutation(internal.rosters.saveDraftInternal, {
+      rosterId: args.rosterId,
+      effectiveStart: args.effectiveStart,
+      effectiveEnd: args.effectiveEnd,
+      entries: args.entries,
+      importIssues: args.importIssues,
+    });
+    return { ok: true };
+  },
+});
+
 export const publish = action({
-  args: { token: v.string(), rosterId: v.id("rosters"), entries: v.array(entryValidator), replacePublishedId: v.optional(v.id("rosters")) },
+  args: { token: v.string(), rosterId: v.id("rosters"), entries: v.array(entryValidator), effectiveStart: v.string(), effectiveEnd: v.string(), replacePublishedId: v.optional(v.id("rosters")) },
   handler: async (ctx, args): Promise<{ ok: boolean }> => {
     const admin = await requireRosterAdmin(ctx, args.token);
     const roster = await ctx.runQuery(internal.rosters.getRoster, { rosterId: args.rosterId });
@@ -73,12 +92,17 @@ export const publish = action({
     const active = new Set(activePeople.map(normalizeName));
     const dates = new Set<string>();
     const expectedDates = new Set<string>();
-    const cursor = new Date(`${roster.effectiveStart}T12:00:00Z`);
-    const last = new Date(`${roster.effectiveEnd}T12:00:00Z`);
+    const validDate = (value: string) => {
+      const date = new Date(`${value}T12:00:00Z`);
+      return datePattern.test(value) && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+    if (!validDate(args.effectiveStart) || !validDate(args.effectiveEnd) || args.effectiveStart > args.effectiveEnd) throw new ConvexError("Select a valid effective date range.");
+    const cursor = new Date(`${args.effectiveStart}T12:00:00Z`);
+    const last = new Date(`${args.effectiveEnd}T12:00:00Z`);
     while (cursor <= last && expectedDates.size <= 370) { expectedDates.add(cursor.toISOString().slice(0, 10)); cursor.setUTCDate(cursor.getUTCDate() + 1); }
     if (!expectedDates.size || expectedDates.size > 370) throw new ConvexError("Effective roster period must contain 1–370 calendar days.");
     for (const entry of args.entries) {
-      if (!datePattern.test(entry.date) || entry.date < roster.effectiveStart || entry.date > roster.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range.`);
+      if (!datePattern.test(entry.date) || entry.date < args.effectiveStart || entry.date > args.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range.`);
       if (dates.has(entry.date)) throw new ConvexError(`Duplicate roster date: ${entry.date}.`);
       dates.add(entry.date);
       const assigned = [entry.officeStaff, ...entry.fieldStaff].map((name) => name.trim());
@@ -86,7 +110,7 @@ export const publish = action({
       for (const name of assigned) if (!active.has(normalizeName(name))) throw new ConvexError(`${name} is not in the active personnel records.`);
     }
     for (const date of expectedDates) if (!dates.has(date)) throw new ConvexError(`Missing daily duty assignment for ${date}.`);
-    await ctx.runMutation(internal.rosters.publishInternal, { rosterId: args.rosterId, entries: args.entries, replacedId: args.replacePublishedId, publishedBy: admin.username });
+    await ctx.runMutation(internal.rosters.publishInternal, { rosterId: args.rosterId, effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, entries: args.entries, replacedId: args.replacePublishedId, publishedBy: admin.username });
     return { ok: true };
   },
 });

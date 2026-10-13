@@ -66,16 +66,44 @@ function validateRosterEntries(roster: { effectiveStart: string; effectiveEnd: s
   for (const date of expectedDates) if (!dates.has(date)) throw new ConvexError(`Missing daily duty assignment for ${date}.`);
 }
 
-export const publishInternal = internalMutation({
-  args: { rosterId: v.id("rosters"), entries: v.array(entryValidator), replacedId: v.optional(v.id("rosters")), publishedBy: v.string() },
+export const saveDraftInternal = internalMutation({
+  args: { rosterId: v.id("rosters"), effectiveStart: v.string(), effectiveEnd: v.string(), entries: v.array(entryValidator), importIssues: v.array(v.string()) },
   handler: async (ctx, args) => {
     const roster = await ctx.db.get(args.rosterId);
     if (!roster || roster.status !== "draft") throw new ConvexError("Select an uploaded draft roster.");
-    validateRosterEntries(roster, args.entries);
-    const overlaps = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect()).filter((row) => row.effectiveStart <= roster.effectiveEnd && row.effectiveEnd >= roster.effectiveStart);
+    const validDate = (value: string) => {
+      const date = new Date(`${value}T12:00:00Z`);
+      return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+    if (!validDate(args.effectiveStart) || !validDate(args.effectiveEnd) || args.effectiveStart > args.effectiveEnd) throw new ConvexError("Select a valid effective date range.");
+    const expected = new Set<string>();
+    const cursor = new Date(`${args.effectiveStart}T12:00:00Z`);
+    const end = new Date(`${args.effectiveEnd}T12:00:00Z`);
+    while (cursor <= end && expected.size <= 370) { expected.add(cursor.toISOString().slice(0, 10)); cursor.setUTCDate(cursor.getUTCDate() + 1); }
+    if (!expected.size || expected.size > 370) throw new ConvexError("Effective roster period must contain 1–370 calendar days.");
+    const seen = new Set<string>();
+    for (const entry of args.entries) {
+      const date = new Date(`${entry.date}T12:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== entry.date || entry.date < args.effectiveStart || entry.date > args.effectiveEnd) throw new ConvexError(`Date ${entry.date} is outside the effective range or invalid.`);
+      if (seen.has(entry.date)) throw new ConvexError(`Duplicate roster date: ${entry.date}.`);
+      seen.add(entry.date);
+    }
+    for (const date of expected) if (!seen.has(date)) throw new ConvexError(`Missing daily duty assignment for ${date}.`);
+    await ctx.db.patch(args.rosterId, { effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, entries: args.entries, importIssues: args.importIssues });
+  },
+});
+
+export const publishInternal = internalMutation({
+  args: { rosterId: v.id("rosters"), effectiveStart: v.string(), effectiveEnd: v.string(), entries: v.array(entryValidator), replacedId: v.optional(v.id("rosters")), publishedBy: v.string() },
+  handler: async (ctx, args) => {
+    const roster = await ctx.db.get(args.rosterId);
+    if (!roster || roster.status !== "draft") throw new ConvexError("Select an uploaded draft roster.");
+    const effectiveRoster = { ...roster, effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd };
+    validateRosterEntries(effectiveRoster, args.entries);
+    const overlaps = (await ctx.db.query("rosters").withIndex("by_status", (q) => q.eq("status", "published")).collect()).filter((row) => row.effectiveStart <= args.effectiveEnd && row.effectiveEnd >= args.effectiveStart);
     if (overlaps.some((row) => row._id !== args.replacedId) || (args.replacedId && !overlaps.some((row) => row._id === args.replacedId))) throw new ConvexError("A roster already covers this period. Explicitly select the published version to replace it.");
     if (args.replacedId) await ctx.db.patch(args.replacedId, { status: "archived", archivedAt: Date.now(), archivedBy: args.publishedBy });
-    await ctx.db.patch(args.rosterId, { entries: args.entries, status: "published", publishedAt: Date.now(), publishedBy: args.publishedBy });
+    await ctx.db.patch(args.rosterId, { effectiveStart: args.effectiveStart, effectiveEnd: args.effectiveEnd, entries: args.entries, status: "published", publishedAt: Date.now(), publishedBy: args.publishedBy });
   },
 });
 
