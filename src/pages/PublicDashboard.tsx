@@ -423,12 +423,13 @@ function PendingVaccinationRequests() {
   const availableRequestFields = [
     ...new Set(
       requests?.flatMap((request) =>
-        (request.fields ?? []).map((field) => field.header),
+        (request.fields ?? [])
+          .map((field) => field.header)
+          .filter((header) => header !== "Timestamp"),
       ) ?? [],
     ),
   ];
   const requestFields = [
-    "Timestamp",
     "Date of Application",
     "Doses of Vaccine required?",
     "VFA ASSIGNED",
@@ -441,17 +442,15 @@ function PendingVaccinationRequests() {
     ),
   ];
   const requestFieldWidths = requestFields.map((header) =>
-    header === "Timestamp" || header === "Date of Application"
-      ? 9
-      : header === "Doses of Vaccine required?"
-        ? 9
-        : header === "VFA ASSIGNED" || header === "Name of the Requestor"
+    header === "Date of Application" || header === "Doses of Vaccine required?"
+      ? 10
+      : header === "VFA ASSIGNED" || header === "Name of the Requestor"
+        ? 11
+        : header === "Phone Number of the requestor"
           ? 10
-          : header === "Phone Number of the requestor"
+          : header.toLowerCase().includes("village")
             ? 9
-            : header.toLowerCase().includes("village")
-              ? 8
-              : 7,
+            : 8,
   );
   const requestFieldWidthTotal = requestFieldWidths.reduce(
     (total, width) => total + width,
@@ -511,11 +510,9 @@ function PendingVaccinationRequests() {
                     const value = (request.fields ?? []).find((field) => field.header === header)?.value;
                     return (
                       <td key={header} className="whitespace-normal break-words [overflow-wrap:anywhere] py-2.5 pr-2">
-                        {header === "Timestamp"
-                          ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
-                          : header === "VFA ASSIGNED"
-                            ? request.assignedVfa
-                            : value || "—"}
+                        {header === "VFA ASSIGNED"
+                          ? request.assignedVfa
+                          : value || "—"}
                       </td>
                     );
                   })}
