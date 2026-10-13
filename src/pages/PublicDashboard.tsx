@@ -440,6 +440,23 @@ function PendingVaccinationRequests() {
         header !== "VFA ASSIGNED",
     ),
   ];
+  const requestFieldWidths = requestFields.map((header) =>
+    header === "Timestamp" || header === "Date of Application"
+      ? 9
+      : header === "Doses of Vaccine required?"
+        ? 9
+        : header === "VFA ASSIGNED" || header === "Name of the Requestor"
+          ? 10
+          : header === "Phone Number of the requestor"
+            ? 9
+            : header.toLowerCase().includes("village")
+              ? 8
+              : 7,
+  );
+  const requestFieldWidthTotal = requestFieldWidths.reduce(
+    (total, width) => total + width,
+    0,
+  );
 
   return (
     <section className="min-w-0 space-y-3">
@@ -463,37 +480,22 @@ function PendingVaccinationRequests() {
           No pending vaccination requests at present.
         </p>
       ) : (
-        <div className="w-full max-w-full overflow-x-auto rounded-md border border-border bg-card md:overflow-x-hidden">
-          <table className="w-full min-w-[1200px] table-fixed text-left text-sm md:min-w-0">
+        <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-border bg-card md:overflow-x-hidden">
+          <table className="w-full min-w-[1100px] table-fixed text-left text-sm md:min-w-0">
             <colgroup>
-              <col className="w-12" />
-              {requestFields.map((header) => (
+              <col style={{ width: "5%" }} />
+              {requestFields.map((header, index) => (
                 <col
                   key={header}
                   style={{
-                      width:
-                      requestFields.length <= 8
-                        ? header === "Timestamp" || header === "Date of Application"
-                          ? "12%"
-                          : header === "Doses of Vaccine required?" || header === "Phone Number of the requestor"
-                            ? "13%"
-                            : header === "VFA ASSIGNED" || header === "Name of the Requestor"
-                              ? "15%"
-                              : "auto"
-                        : header === "Timestamp" || header === "Date of Application"
-                          ? "9%"
-                          : header === "Doses of Vaccine required?" || header === "Phone Number of the requestor"
-                            ? "10%"
-                            : header === "VFA ASSIGNED" || header === "Name of the Requestor"
-                              ? "11%"
-                              : "auto",
+                    width: `${(95 * requestFieldWidths[index]) / requestFieldWidthTotal}%`,
                   }}
                 />
               ))}
             </colgroup>
             <thead className="bg-muted/70">
               <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
-                <th className="w-12 py-2 pl-3 pr-2 font-medium">S/N</th>
+                <th className="py-2 pl-2 pr-1 text-[10px] font-medium">S/N</th>
                 {requestFields.map((header) => (
                   <th key={header} className="whitespace-normal break-words [overflow-wrap:anywhere] py-2 pr-2 font-medium">
                     {header}
@@ -504,7 +506,7 @@ function PendingVaccinationRequests() {
             <tbody>
               {requests.map((request, index) => (
                 <tr key={request._id} className="border-b border-border/60 align-top last:border-0">
-                  <td className="py-2.5 pl-3 pr-2 tabular-nums">{index + 1}</td>
+                  <td className="py-2.5 pl-2 pr-1 tabular-nums">{index + 1}</td>
                   {requestFields.map((header) => {
                     const value = (request.fields ?? []).find((field) => field.header === header)?.value;
                     return (

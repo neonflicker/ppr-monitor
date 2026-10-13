@@ -121,8 +121,11 @@ export const requestSyncStatus = query({
       .first();
     const lastSuccess = await ctx.db
       .query("sheetSyncs")
-      .withIndex("by_request_source_finished", (q) => q.eq("requestSource", sourceId))
+      .withIndex("by_request_source_finished", (q) =>
+        q.eq("requestSource", sourceId),
+      )
       .order("desc")
+      .filter((q) => q.neq(q.field("requestSyncFinishedAt"), undefined))
       .first();
     return {
       lastAttempt: latestAttempt
@@ -131,9 +134,7 @@ export const requestSyncStatus = query({
             startedAt: latestAttempt.startedAt,
             finishedAt: latestAttempt.finishedAt,
             error:
-              latestAttempt.status === "error" &&
-              latestAttempt.requestSyncStartedAt !== undefined &&
-              latestAttempt.requestSyncFinishedAt === undefined
+              latestAttempt.status === "error"
                 ? latestAttempt.requestSyncError ?? latestAttempt.error
                 : undefined,
           }
@@ -206,6 +207,16 @@ export const syncVaccinationRequests = internalMutation({
   },
   handler: async (ctx, { syncId, requestSource, rows, totalRows }) => {
     const now = Date.now();
+    const previousSuccessfulRun = await ctx.db
+      .query("sheetSyncs")
+      .withIndex("by_request_source_finished", (q) =>
+        q.eq("requestSource", requestSource),
+      )
+      .order("desc")
+      .filter((q) => q.neq(q.field("requestSyncFinishedAt"), undefined))
+      .first();
+    const canAdoptLegacyRows = previousSuccessfulRun !== null;
+    const rowsBySourceKey = new Map(rows.map((row) => [row.sourceKey, row]));
     const seenKeys = new Set<string>();
     let inserted = 0;
     let updated = 0;
@@ -216,9 +227,8 @@ export const syncVaccinationRequests = internalMutation({
         .query("vaccinationRequests")
         .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
         .first();
-      // One-time compatibility migration: older versions stored only the
-      // response timestamp. The app had a single configured request sheet, so
-      // an untagged timestamp match is legacy data from that source.
+      // One-time compatibility migration: only adopt timestamp-keyed rows
+      // after a completed sync for this exact configured source proves their origin.
       if (!existing) {
         const legacy = await ctx.db
           .query("vaccinationRequests")
@@ -245,6 +255,7 @@ export const syncVaccinationRequests = internalMutation({
         status: existing.status,
         completedAt: existing.completedAt,
         completionSource: existing.completionSource,
+        sourceMissingAt: undefined,
         updatedAt: now,
       });
       updated++;
@@ -256,10 +267,11 @@ export const syncVaccinationRequests = internalMutation({
       .collect();
     let deletedPendingRequests = 0;
     for (const request of pending) {
-      // Legacy untagged pending rows are attributable to the application's
-      // former single configured request-response worksheet.
+      // Migrate legacy rows only when a completed sync proves this exact source
+      // owned the former unqualified timestamp keys. Never infer a deletion for
+      // untagged rows whose origin cannot be established.
       if (!request.requestSource) {
-        const existingResponse = rows.find((row) => row.sourceKey === request.sourceKey);
+        const existingResponse = rowsBySourceKey.get(request.sourceKey);
         if (existingResponse) {
           await ctx.db.patch(request._id, {
             ...existingResponse,
@@ -271,11 +283,16 @@ export const syncVaccinationRequests = internalMutation({
           updated++;
           continue;
         }
-        await ctx.db.delete(request._id);
-        deletedPendingRequests++;
+        if (canAdoptLegacyRows) {
+          await ctx.db.delete(request._id);
+          deletedPendingRequests++;
+        }
         continue;
       }
-      if (request.requestSource !== requestSource || seenKeys.has(request.sourceKey)) continue;
+      if (
+        request.requestSource !== requestSource ||
+        seenKeys.has(request.sourceKey)
+      ) continue;
       await ctx.db.delete(request._id);
       deletedPendingRequests++;
     }
@@ -290,7 +307,12 @@ export const syncVaccinationRequests = internalMutation({
         ? request.sourceKey
         : `${requestSource}::${request.sourceKey}`;
       const isPresent = seenKeys.has(sourceKey);
-      if (!request.requestSource || (isPresent && request.sourceMissingAt) || (!isPresent && !request.sourceMissingAt)) {
+      if (!request.requestSource && !isPresent) continue;
+      if (
+        !request.requestSource ||
+        (isPresent && request.sourceMissingAt) ||
+        (!isPresent && !request.sourceMissingAt)
+      ) {
         await ctx.db.patch(request._id, {
           requestSource,
           sourceKey,
