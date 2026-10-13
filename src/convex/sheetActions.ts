@@ -10,6 +10,7 @@ import {
   diffSheetRecords,
   parseSheet,
   parseVaccinationRequests,
+  requestSourceId,
 } from "./lib/sheetParser";
 import { normalizeVillage } from "./lib/villageMatch";
 
@@ -252,10 +253,12 @@ async function performSync(
     const settings = await ctx.runQuery(internal.settings.getRaw, {});
     const syncId = await ctx.runMutation(internal.sync.beginSync, {
       sheetUrl: settings.sheetUrl,
+      requestSource: requestSourceId(settings.requestSheetUrl, settings.requestSheetGid),
       triggeredBy: mode,
     });
 
     const startedAt = Date.now();
+    let requestSyncStarted = false;
     try {
       await ctx.runMutation(internal.sync.setStage, {
         syncId,
@@ -280,6 +283,8 @@ async function performSync(
 
       // Request response reconciliation is separate from vaccination-record
       // diff/deletion and never contributes to achievement counts.
+      requestSyncStarted = true;
+      await ctx.runMutation(internal.sync.markRequestSyncStarted, { syncId });
       const requestCsv = await fetchCsv(
         buildCsvUrl(settings.requestSheetUrl, settings.requestSheetGid),
       );
@@ -362,8 +367,12 @@ async function performSync(
 
       // Commit request sync only after vaccination-sheet reconciliation has
       // completed. The request table is separate and is never part of deletes.
-      await ctx.runMutation(internal.sync.syncVaccinationRequests, {
+      const requestSource = requestSourceId(settings.requestSheetUrl, settings.requestSheetGid);
+      const requestResult = await ctx.runMutation(internal.sync.syncVaccinationRequests, {
+        syncId,
+        requestSource,
         rows: requestSyncRows,
+        totalRows: requestParse.totalRows,
       });
       await ctx.runMutation(internal.sync.completeRequestsForVillages, {
         villages: parsed.completionYesVillages,
@@ -411,6 +420,7 @@ async function performSync(
       await ctx.runMutation(internal.sync.finishError, {
         syncId,
         error: message,
+        requestSyncError: requestSyncStarted ? message : undefined,
       });
       throw new ConvexError(message);
     }

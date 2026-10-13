@@ -91,6 +91,9 @@ export function parseCsv(text: string): string[][] {
       field += ch;
     }
   }
+  if (inQuotes) {
+    throw new Error("The Google Sheets CSV response ended inside a quoted field.");
+  }
   row.push(field);
   rows.push(row);
   return rows;
@@ -424,15 +427,31 @@ export function parseVaccinationRequests(csv: string): ParsedVaccinationRequests
     };
   }
   const records: ParsedVaccinationRequest[] = [];
-  for (const cells of rows.slice(1)) {
+  const seenSourceKeys = new Set<string>();
+  for (const [index, cells] of rows.slice(1).entries()) {
     const cell = (key: keyof typeof REQUEST_FIELDS) =>
       columns[key] < 0 ? "" : (cells[columns[key]] ?? "").trim();
     const timestamp = cell("timestamp");
     const village = cell("village");
     const requestDate = parseSheetDate(cell("date"));
-    // Timestamp is the stable Google Forms row identity and permits edited
-    // responses to update their original stored request.
-    if (!timestamp || !village || requestDate === null) continue;
+    // Every nonempty source row must be structurally complete before this
+    // result may be used for deletion reconciliation. Timestamp is immutable
+    // for a Google Forms response and remains stable when answers are edited.
+    if (!timestamp || !village || requestDate === null) {
+      return {
+        records,
+        totalRows: Math.max(0, rows.length - 1),
+        fatal: `Request response row ${index + 2} is missing a timestamp, village, or valid application date; no request reconciliation was applied.`,
+      };
+    }
+    if (seenSourceKeys.has(timestamp)) {
+      return {
+        records,
+        totalRows: Math.max(0, rows.length - 1),
+        fatal: `Request response timestamps must be unique; duplicate identity at row ${index + 2}. No request reconciliation was applied.`,
+      };
+    }
+    seenSourceKeys.add(timestamp);
     const fields: VaccinationRequestField[] = headers
       .map((header, index) => ({ header, value: (cells[index] ?? "").trim() }))
       .filter(({ header }) => header.length > 0);
@@ -733,6 +752,14 @@ export function parseSheet(text: string, pprValues: string[]): ParsedSheet {
 }
 
 /** Build the public CSV export URL for a Google Sheets link. */
+export function requestSourceId(sheetUrl: string, gid?: string): string {
+  const trimmed = sheetUrl.trim();
+  const idMatch = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!idMatch) throw new Error("The request sheet URL does not contain a Google Sheets ID.");
+  const gidFromUrl = trimmed.match(/[?&]gid=(\d+)/)?.[1];
+  return `${idMatch[1]}:${gid?.trim() || gidFromUrl || ""}`;
+}
+
 export function buildCsvUrl(sheetUrl: string, gid?: string): string {
   const trimmed = sheetUrl.trim();
   const idMatch = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);

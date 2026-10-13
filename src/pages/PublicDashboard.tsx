@@ -419,13 +419,14 @@ function TodayDutyRoster() {
 
 function PendingVaccinationRequests() {
   const requests = useQuery(api.sync.pendingRequests, {});
+  const requestSyncStatus = useQuery(api.sync.requestSyncStatus, {});
   const availableRequestFields = [
     ...new Set(
       requests?.flatMap((request) =>
         (request.fields ?? []).map((field) => field.header),
       ) ?? [],
     ),
-  ].filter((header) => header !== "Email Address" && header !== "Remarks");
+  ];
   const requestFields = [
     "Timestamp",
     "Date of Application",
@@ -441,8 +442,18 @@ function PendingVaccinationRequests() {
   ];
 
   return (
-    <section className="space-y-3">
+    <section className="min-w-0 space-y-3">
       <SectionHead title="Pending Vaccination Requests" />
+      <p className="text-xs text-muted-foreground">
+        Requests synced: {requestSyncStatus?.lastSuccess?.finishedAt
+          ? format(requestSyncStatus.lastSuccess.finishedAt, "d MMM yyyy, hh:mm a")
+          : "Never"}
+      </p>
+      {requestSyncStatus?.lastAttempt?.error && (
+        <p role="alert" className="break-words rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Request sync failed: {requestSyncStatus.lastAttempt.error}
+        </p>
+      )}
       {requests === undefined ? (
         <div className="flex items-center justify-center py-5">
           <Loader2 className="size-5 animate-spin text-primary" />
@@ -452,13 +463,39 @@ function PendingVaccinationRequests() {
           No pending vaccination requests at present.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border bg-card">
-          <table className="w-full min-w-[1440px] table-fixed text-left text-sm">
+        <div className="w-full max-w-full overflow-x-auto rounded-md border border-border bg-card md:overflow-x-hidden">
+          <table className="w-full min-w-[1200px] table-fixed text-left text-sm md:min-w-0">
+            <colgroup>
+              <col className="w-12" />
+              {requestFields.map((header) => (
+                <col
+                  key={header}
+                  style={{
+                      width:
+                      requestFields.length <= 8
+                        ? header === "Timestamp" || header === "Date of Application"
+                          ? "12%"
+                          : header === "Doses of Vaccine required?" || header === "Phone Number of the requestor"
+                            ? "13%"
+                            : header === "VFA ASSIGNED" || header === "Name of the Requestor"
+                              ? "15%"
+                              : "auto"
+                        : header === "Timestamp" || header === "Date of Application"
+                          ? "9%"
+                          : header === "Doses of Vaccine required?" || header === "Phone Number of the requestor"
+                            ? "10%"
+                            : header === "VFA ASSIGNED" || header === "Name of the Requestor"
+                              ? "11%"
+                              : "auto",
+                  }}
+                />
+              ))}
+            </colgroup>
             <thead className="bg-muted/70">
               <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
-                <th className="w-14 py-2 pl-3 pr-3 font-medium">S/N</th>
+                <th className="w-12 py-2 pl-3 pr-2 font-medium">S/N</th>
                 {requestFields.map((header) => (
-                  <th key={header} className="w-48 whitespace-normal py-2 pr-3 font-medium">
+                  <th key={header} className="whitespace-normal break-words [overflow-wrap:anywhere] py-2 pr-2 font-medium">
                     {header}
                   </th>
                 ))}
@@ -467,11 +504,11 @@ function PendingVaccinationRequests() {
             <tbody>
               {requests.map((request, index) => (
                 <tr key={request._id} className="border-b border-border/60 align-top last:border-0">
-                  <td className="py-2.5 pl-3 pr-3 tabular-nums">{index + 1}</td>
+                  <td className="py-2.5 pl-3 pr-2 tabular-nums">{index + 1}</td>
                   {requestFields.map((header) => {
                     const value = (request.fields ?? []).find((field) => field.header === header)?.value;
                     return (
-                      <td key={header} className="max-w-48 whitespace-normal break-words py-2.5 pr-3">
+                      <td key={header} className="whitespace-normal break-words [overflow-wrap:anywhere] py-2.5 pr-2">
                         {header === "Timestamp"
                           ? format(request.submittedAt, "d MMM yyyy, hh:mm a")
                           : header === "VFA ASSIGNED"

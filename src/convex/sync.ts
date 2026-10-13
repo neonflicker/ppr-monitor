@@ -10,6 +10,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeVillage } from "./lib/villageMatch";
 import { internal } from "./_generated/api";
 import { resolveAssignments } from "./villageAssignments";
+import { readSettingsDoc } from "./settings";
+import { requestSourceId } from "./lib/sheetParser";
 
 const STALE_SYNC_MS = 5 * 60 * 1000;
 
@@ -87,7 +89,10 @@ const requestRowValidator = v.object({
 
 /** Public request rows omit all contact and identity details. */
 async function loadPendingRequests(ctx: QueryCtx) {
-  const rows = await ctx.db.query("vaccinationRequests").withIndex("by_status", (q) => q.eq("status", "pending")).collect();
+  const settings = await readSettingsDoc(ctx);
+  const requestSource = requestSourceId(settings.requestSheetUrl, settings.requestSheetGid);
+  const rows = (await ctx.db.query("vaccinationRequests").withIndex("by_status", (q) => q.eq("status", "pending")).collect())
+    .filter((row) => !row.requestSource || row.requestSource === requestSource);
   const assignments = await resolveAssignments(ctx, rows.map((row) => row.village));
   return rows.map(({ _id, timestamp, submittedAt, requestDate, village, fields }) => ({
     _id, timestamp, submittedAt, requestDate, village,
@@ -100,6 +105,47 @@ export const pendingRequests = query({
   args: {},
   handler: async (ctx) => {
     return await loadPendingRequests(ctx);
+  },
+});
+
+/** Request-specific status follows the active configured spreadsheet + tab. */
+export const requestSyncStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const settings = await readSettingsDoc(ctx);
+    const sourceId = requestSourceId(settings.requestSheetUrl, settings.requestSheetGid);
+    const latestAttempt = await ctx.db
+      .query("sheetSyncs")
+      .withIndex("by_request_source_started", (q) => q.eq("requestSource", sourceId))
+      .order("desc")
+      .first();
+    const lastSuccess = await ctx.db
+      .query("sheetSyncs")
+      .withIndex("by_request_source_finished", (q) => q.eq("requestSource", sourceId))
+      .order("desc")
+      .first();
+    return {
+      lastAttempt: latestAttempt
+        ? {
+            status: latestAttempt.status,
+            startedAt: latestAttempt.startedAt,
+            finishedAt: latestAttempt.finishedAt,
+            error:
+              latestAttempt.status === "error" &&
+              latestAttempt.requestSyncStartedAt !== undefined &&
+              latestAttempt.requestSyncFinishedAt === undefined
+                ? latestAttempt.requestSyncError ?? latestAttempt.error
+                : undefined,
+          }
+        : null,
+      lastSuccess: lastSuccess?.requestSyncFinishedAt
+        ? {
+            finishedAt: lastSuccess.requestSyncFinishedAt,
+            rowsRetrieved: lastSuccess.requestRowsRetrieved ?? 0,
+            deletedPendingRequests: lastSuccess.deletedPendingRequests ?? 0,
+          }
+        : null,
+    };
   },
 });
 
@@ -148,22 +194,43 @@ export const getCompletedRequests = internalQuery({
 
 const COMPLETION_SOURCE = "Vaccination submission — village completion reported YES";
 
-/** Upsert request form responses by their stable Google Forms timestamp and
- *  never demote an existing completion. This table is not used by statistics. */
+/** Atomically upsert the validated full response snapshot and reconcile only
+ *  pending requests owned by this exact spreadsheet + worksheet. Completed
+ *  rows are retained as audit history, including when their source row vanishes. */
 export const syncVaccinationRequests = internalMutation({
-  args: { rows: v.array(requestRowValidator) },
-  handler: async (ctx, { rows }) => {
+  args: {
+    syncId: v.id("sheetSyncs"),
+    requestSource: v.string(),
+    rows: v.array(requestRowValidator),
+    totalRows: v.number(),
+  },
+  handler: async (ctx, { syncId, requestSource, rows, totalRows }) => {
     const now = Date.now();
+    const seenKeys = new Set<string>();
     let inserted = 0;
     let updated = 0;
     for (const row of rows) {
-      const existing = await ctx.db
+      const sourceKey = `${requestSource}::${row.sourceKey}`;
+      seenKeys.add(sourceKey);
+      let existing = await ctx.db
         .query("vaccinationRequests")
-        .withIndex("by_source_key", (q) => q.eq("sourceKey", row.sourceKey))
-        .unique();
+        .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
+        .first();
+      // One-time compatibility migration: older versions stored only the
+      // response timestamp. The app had a single configured request sheet, so
+      // an untagged timestamp match is legacy data from that source.
+      if (!existing) {
+        const legacy = await ctx.db
+          .query("vaccinationRequests")
+          .withIndex("by_source_key", (q) => q.eq("sourceKey", row.sourceKey))
+          .first();
+        if (legacy && !legacy.requestSource) existing = legacy;
+      }
       if (!existing) {
         await ctx.db.insert("vaccinationRequests", {
           ...row,
+          sourceKey,
+          requestSource,
           status: "pending",
           updatedAt: now,
         });
@@ -172,7 +239,9 @@ export const syncVaccinationRequests = internalMutation({
       }
       await ctx.db.patch(existing._id, {
         ...row,
-        // Completion survives both edited source rows and later syncs.
+        sourceKey,
+        requestSource,
+        // Completion survives edited source rows and later synchronizations.
         status: existing.status,
         completedAt: existing.completedAt,
         completionSource: existing.completionSource,
@@ -180,7 +249,63 @@ export const syncVaccinationRequests = internalMutation({
       });
       updated++;
     }
-    return { inserted, updated };
+
+    const pending = await ctx.db
+      .query("vaccinationRequests")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+    let deletedPendingRequests = 0;
+    for (const request of pending) {
+      // Legacy untagged pending rows are attributable to the application's
+      // former single configured request-response worksheet.
+      if (!request.requestSource) {
+        const existingResponse = rows.find((row) => row.sourceKey === request.sourceKey);
+        if (existingResponse) {
+          await ctx.db.patch(request._id, {
+            ...existingResponse,
+            sourceKey: `${requestSource}::${request.sourceKey}`,
+            requestSource,
+            status: "pending",
+            updatedAt: now,
+          });
+          updated++;
+          continue;
+        }
+        await ctx.db.delete(request._id);
+        deletedPendingRequests++;
+        continue;
+      }
+      if (request.requestSource !== requestSource || seenKeys.has(request.sourceKey)) continue;
+      await ctx.db.delete(request._id);
+      deletedPendingRequests++;
+    }
+
+    const completed = await ctx.db
+      .query("vaccinationRequests")
+      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .collect();
+    for (const request of completed) {
+      if (request.requestSource && request.requestSource !== requestSource) continue;
+      const sourceKey = request.requestSource
+        ? request.sourceKey
+        : `${requestSource}::${request.sourceKey}`;
+      const isPresent = seenKeys.has(sourceKey);
+      if (!request.requestSource || (isPresent && request.sourceMissingAt) || (!isPresent && !request.sourceMissingAt)) {
+        await ctx.db.patch(request._id, {
+          requestSource,
+          sourceKey,
+          sourceMissingAt: isPresent ? undefined : now,
+        });
+      }
+    }
+
+    await ctx.db.patch(syncId, {
+      requestSyncFinishedAt: now,
+      requestRowsRetrieved: totalRows,
+      deletedPendingRequests,
+      requestSyncError: undefined,
+    });
+    return { inserted, updated, deletedPendingRequests };
   },
 });
 
@@ -265,9 +390,10 @@ async function failStaleRuns(ctx: MutationCtx) {
 export const beginSync = internalMutation({
   args: {
     sheetUrl: v.string(),
-    triggeredBy: v.union(v.literal("manual"), v.literal("auto")),
+    requestSource: v.string(),
+      triggeredBy: v.union(v.literal("manual"), v.literal("auto")),
   },
-  handler: async (ctx, { sheetUrl, triggeredBy }) => {
+  handler: async (ctx, { sheetUrl, requestSource, triggeredBy }) => {
     const inFlight = await failStaleRuns(ctx);
     if (inFlight) {
       throw new Error("A Google Sheet sync is already in progress.");
@@ -276,6 +402,7 @@ export const beginSync = internalMutation({
       status: "running",
       stage: "Connecting to Google Sheets…",
       sheetUrl,
+      requestSource,
       triggeredBy,
       startedAt: Date.now(),
     });
@@ -292,9 +419,23 @@ export const setStage = internalMutation({
   },
 });
 
+export const markRequestSyncStarted = internalMutation({
+  args: { syncId: v.id("sheetSyncs") },
+  handler: async (ctx, { syncId }) => {
+    const doc = await ctx.db.get(syncId);
+    if (doc?.status === "running") {
+      await ctx.db.patch(syncId, { requestSyncStartedAt: Date.now() });
+    }
+  },
+});
+
 export const finishError = internalMutation({
-  args: { syncId: v.id("sheetSyncs"), error: v.string() },
-  handler: async (ctx, { syncId, error }) => {
+  args: {
+    syncId: v.id("sheetSyncs"),
+    error: v.string(),
+    requestSyncError: v.optional(v.string()),
+  },
+  handler: async (ctx, { syncId, error, requestSyncError }) => {
     const doc = await ctx.db.get(syncId);
     if (!doc) return;
     const now = Date.now();
@@ -302,6 +443,7 @@ export const finishError = internalMutation({
       status: "error",
       stage: "Failed",
       error,
+      requestSyncError,
       finishedAt: now,
       durationMs: now - doc.startedAt,
     });

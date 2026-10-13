@@ -36,6 +36,7 @@ export default function AdminStatus({ overview, onOpenSettings }: Props) {
   const { token, expireSession } = useAdmin();
   const runSync = useAction(api.sheetActions.syncNow);
   const history = useQuery(api.sync.history, { limit: 6 });
+  const requestSyncStatus = useQuery(api.sync.requestSyncStatus, {});
   const [syncing, setSyncing] = useState(false);
   const autoAttempted = useRef(false);
 
@@ -217,6 +218,20 @@ export default function AdminStatus({ overview, onOpenSettings }: Props) {
         </CardHeader>
 
         <CardContent className="space-y-5">
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <p className="font-medium">Vaccination request responses</p>
+            <p className="text-muted-foreground">
+              Last successful request sync: {stamp(requestSyncStatus?.lastSuccess?.finishedAt) ?? "Never"}
+              {requestSyncStatus?.lastSuccess
+                ? ` · ${nf.format(requestSyncStatus.lastSuccess.deletedPendingRequests)} pending removed`
+                : ""}
+            </p>
+            {requestSyncStatus?.lastAttempt?.error && (
+              <p className="mt-1 break-words text-destructive">
+                Request sync failed: {requestSyncStatus.lastAttempt.error}
+              </p>
+            )}
+          </div>
           {busy && (
             <div>
               <p className="text-sm font-medium text-foreground">

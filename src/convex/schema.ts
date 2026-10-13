@@ -93,6 +93,12 @@ const schema = defineSchema(
       rejectedRecords: v.optional(v.number()),
       // google_sheet rows removed because they no longer exist in the sheet.
       deletedRecords: v.optional(v.number()),
+      requestSource: v.optional(v.string()),
+      requestSyncStartedAt: v.optional(v.number()),
+      requestSyncFinishedAt: v.optional(v.number()),
+      requestRowsRetrieved: v.optional(v.number()),
+      deletedPendingRequests: v.optional(v.number()),
+      requestSyncError: v.optional(v.string()),
       invalidReasons: v.optional(
         v.array(v.object({ reason: v.string(), count: v.number() })),
       ),
@@ -100,7 +106,10 @@ const schema = defineSchema(
       unmappedColumns: v.optional(v.array(v.string())),
       error: v.optional(v.string()),
       durationMs: v.optional(v.number()),
-    }),
+    })
+      .index("by_request_source_started", ["requestSource", "startedAt"])
+      .index("by_request_source_status_started", ["requestSource", "status", "startedAt"])
+      .index("by_request_source_finished", ["requestSource", "requestSyncFinishedAt"]),
 
     // Normalised vaccination records (Google Sheet + Bharat Pashudhan).
     vaccinationRecords: defineTable({
@@ -143,6 +152,7 @@ const schema = defineSchema(
     // ---- PPR vaccination requests (kept separate from achievement records) ----
     vaccinationRequests: defineTable({
       sourceKey: v.string(), // Google Forms Timestamp, stable across response edits
+      requestSource: v.optional(v.string()), // Spreadsheet ID + worksheet gid provenance
       timestamp: v.string(),
       submittedAt: v.number(),
       requestDate: v.number(),
@@ -157,6 +167,7 @@ const schema = defineSchema(
       status: v.union(v.literal("pending"), v.literal("completed")),
       completedAt: v.optional(v.number()),
       completionSource: v.optional(v.string()),
+      sourceMissingAt: v.optional(v.number()), // deletion from source while completed; retained for audit
       updatedAt: v.number(),
     })
       .index("by_source_key", ["sourceKey"])
