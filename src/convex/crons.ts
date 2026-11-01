@@ -9,7 +9,7 @@ const crons = cronJobs();
 // too soon after the last one are no-ops.
 crons.interval(
   "sync-google-sheet",
-  { minutes: 2 },
+  { minutes: 5 },
   internal.sheetActions.cronSync,
   {},
 );
